@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Ayah — Quran Verse Widget</title>
+  <meta name="description" content="A calm widget that shows one ayah at a time, with translation from Quran.com. Move through the Qur'an verse by verse, browse surahs, and keep track of what you've memorized." />
+  <meta name="theme-color" content="#f7f5ef" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0f1a16" media="(prefers-color-scheme: dark)" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="generator" content="local rebuild" />
+
+  <!-- PWA / install metadata -->
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Ayah" />
+
+  <!-- Icons -->
+  <link rel="icon" href="./icons/favicon-32.png" sizes="32x32" type="image/png" />
+  <link rel="icon" href="./icons/icon-192.png" sizes="192x192" type="image/png" />
+  <link rel="icon" href="./icons/icon-512.png" sizes="512x512" type="image/png" />
+  <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon-180.png" />
+
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">
+          <svg viewBox="0 0 512 512" role="img">
+            <rect width="512" height="512" rx="112" fill="#123f2e"/>
+            <circle cx="206" cy="250" r="104" fill="#f2e5c9"/>
+            <circle cx="242" cy="250" r="104" fill="#0a1f17"/>
+            <path d="M396 86 l8 24 24 8 -24 8 -8 24 -8 -24 -24 -8 24 -8 z" fill="#e8c37b"/>
+          </svg>
+        </span>
+        <span class="brand-name">Ayah</span>
+        <span class="brand-sub">Quran verse widget</span>
+      </div>
+      <div class="install-wrap">
+        <button id="installBtn" class="install-btn" hidden>Install</button>
+      </div>
+    </header>
+
+    <nav class="tabs" role="tablist" aria-label="Sections">
+      <button class="tab is-active" data-view="read" role="tab" aria-selected="true">Read</button>
+      <button class="tab" data-view="browse" role="tab" aria-selected="false">Browse</button>
+      <button class="tab" data-view="memorized" role="tab" aria-selected="false">
+        Memorized <span class="tab-count" id="memCount">0</span>
+      </button>
+    </nav>
+
+    <main>
+      <!-- READ -->
+      <section class="view is-active" id="view-read" data-view="read">
+        <div class="widget-card" id="readCard">
+          <div class="read-head">
+            <span class="surah-name" id="readSurah"></span>
+            <span class="verse-key" id="readKey"></span>
+          </div>
+          <div class="verse-arabic" id="readArabic" lang="ar" dir="rtl">…</div>
+          <div class="verse-translation" id="readTranslation"></div>
+          <div class="verse-meta" id="readMeta"></div>
+          <div class="read-actions">
+            <button class="btn" id="btnPrev" aria-label="Previous ayah">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+              Previous
+            </button>
+            <button class="btn btn-toggle" id="btnMemorize" aria-pressed="false">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8L12 17.8 5.9 20.6l1.4-6.8L2.2 9.1l6.9-.8z"/></svg>
+              <span id="memLabel">Memorize</span>
+            </button>
+            <button class="btn" id="btnNext" aria-label="Next ayah">
+              Next
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+          </div>
+          <div class="read-aux">
+            <button class="linkish" id="btnShuffle">🎲 Shuffle</button>
+            <button class="linkish" id="btnQuranCom">Read tafsir on Quran.com ↗</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- BROWSE -->
+      <section class="view" id="view-browse" data-view="browse">
+        <div class="widget-card">
+          <div class="browse-head">
+            <h2>Browse surahs and ayahs</h2>
+            <input type="search" id="surahSearch" class="search" placeholder="Search surah…" autocomplete="off" />
+          </div>
+          <ul class="surah-list" id="surahList"></ul>
+        </div>
+      </section>
+
+      <!-- MEMORIZED -->
+      <section class="view" id="view-memorized" data-view="memorized">
+        <div class="widget-card">
+          <div class="mem-head">
+            <h2 id="memHeadline">Memorized</h2>
+            <p class="mem-sub" id="memSub">Mark verses to build your list.</p>
+          </div>
+          <ul class="mem-list" id="memList"></ul>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <span>Data: Quran.com · Saved on this device automatically</span>
+    </footer>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
