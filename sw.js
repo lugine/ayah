@@ -1,5 +1,6 @@
-/* Ayah service worker — offline-first shell, network-first Quran.com data */
-const VERSION = "v1";
+/* Ayah service worker — network-first for the shell (so updates flow),
+   network-first for Quran.com data, cache fallback for offline use */
+const VERSION = "v2";
 const SHELL_CACHE = `ayah-shell-${VERSION}`;
 const API_CACHE = `ayah-api-${VERSION}`;
 
@@ -52,16 +53,40 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Same-origin: cache-first, then network (and cache the result)
+  // Same-origin requests
   if (url.origin === self.location.origin) {
+    // Page navigations: network-first (always get the latest HTML when online;
+    // fall back to cache when offline)
+    if (req.mode === "navigate") {
+      event.respondWith(
+        fetch(req)
+          .then((res) => {
+            const copy = res.clone();
+            caches.open(SHELL_CACHE).then((c) => c.put(req, copy));
+            return res;
+          })
+          .catch(() =>
+            caches.match(req).then((m) => m || caches.match("./index.html"))
+          )
+      );
+      return;
+    }
+
+    // Everything else (CSS/JS/icons): serve cache instantly for speed, but
+    // refresh from the network in the background so the next open is new.
     event.respondWith(
-      caches.match(req).then((hit) => {
-        if (hit) return hit;
-        return fetch(req).then((res) => {
-          const copy = res.clone();
-          caches.open(SHELL_CACHE).then((c) => c.put(req, copy));
-          return res;
-        });
+      caches.open(SHELL_CACHE).then(async (cache) => {
+        const cached = await cache.match(req);
+        const network = fetch(req)
+          .then((res) => {
+            if (res && res.ok) {
+              const copy = res.clone();
+              cache.put(req, copy);
+            }
+            return res;
+          })
+          .catch(() => cached);
+        return cached || network;
       })
     );
     return;
