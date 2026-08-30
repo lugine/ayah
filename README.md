@@ -48,6 +48,18 @@ python3 -m http.server 8137
 1. Open **https://lugine.github.io/ayah/** in Safari.
 2. Tap **Share → Add to Home Screen → Add** — runs full-screen like an app.
 
+### Real home-screen widget on iPhone (free)
+iOS only lets *native* apps have widgets — but the free **Scriptable** app can run
+our widget script and put a **live daily-ayah widget** on your home screen
+(same verse the app shows, Arabic + Saheeh translation, big Western ayah number,
+offline cache, tap opens the app):
+
+1. Open **https://lugine.github.io/ayah/widget-install.html** on your iPhone.
+2. Follow the 5 steps there (install Scriptable → copy code → paste → add widget).
+
+If `scriptable-widget.js` changes, re-copy the code from the install page and
+re-paste it in Scriptable.
+
 ## Add it as a widget on your Mac
 macOS 15.6 supports Safari web widgets:
 1. Open the URL in Safari.
@@ -55,8 +67,8 @@ macOS 15.6 supports Safari web widgets:
    desktop → **Edit Widgets…** → search **"Ayah"** → drag it onto the desktop.
 
 > Note: iOS doesn't allow websites to become home-screen *widgets* (only
-> native apps do that). This free route = full-screen app icon on iPhone +
-> a live desktop widget on Mac.
+> native apps do that). This free route = full-screen app icon + the Scriptable
+> widget on iPhone, and a live desktop widget on Mac.
 
 ## Files
 | File | Purpose |
