@@ -436,4 +436,21 @@ main { display: block; }
   transition: width 0.2s linear;
 }
 .audio-bar .miniselect { flex: 0 0 auto; max-width: 170px; }
+.miniselect-narrow { max-width: 64px !important; }
+.audio-toggle {
+  flex: 0 0 auto;
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  display: grid; place-items: center;
+  cursor: pointer;
+}
+.audio-toggle.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
 .linkish:hover { color: var(--accent); background: var(--accent-soft); }

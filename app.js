@@ -133,6 +133,8 @@ const LS_VERSECACHE = "ayah.verseCache.v1";
 const AUDIO_BASE = "https://verses.quran.com/";
 const LS_RECITER = "ayah.reciter.v1";
 const LS_AUDIOCACHE = "ayah.audioCache.v1";
+const LS_AUTO = "ayah.auto.v1";
+const LS_REPEAT = "ayah.repeat.v1";
 
 /* ---------- Recitations (Quran.com audio reciters) ---------- */
 const RECITERS = [
@@ -210,7 +212,10 @@ const state = {
   chapterExpanded: null,
   chapterCache: {},
   reciterId: Number(loadJSON(LS_RECITER, 7)),
-  audioCache: loadJSON(LS_AUDIOCACHE, {})
+  audioCache: loadJSON(LS_AUDIOCACHE, {}),
+  autoPlay: loadJSON(LS_AUTO, false),
+  repeat: Number(loadJSON(LS_REPEAT, 1)),
+  repeatCount: 0
 };
 
 /* ---------- DOM refs ---------- */
@@ -245,7 +250,9 @@ const dom = {
   playIcon: $("#playIcon"),
   pauseIcon: $("#pauseIcon"),
   audioFill: $("#audioFill"),
-  audioEl: $("#audioEl")
+  audioEl: $("#audioEl"),
+  btnAuto: $("#btnAuto"),
+  repeatSelect: $("#repeatSelect")
 };
 
 /* ---------- Toast helper ---------- */
@@ -407,11 +414,31 @@ async function refreshAudio(key) {
   const btn = dom.btnPlay;
   btn.disabled = true;
   dom.audioFill.style.width = "0%";
+  const currentSrc = dom.audioEl.src;
+  const wasPlaying = !dom.audioEl.paused && !dom.audioEl.ended && currentSrc;
   try {
     const url = await loadAudioUrl(key, state.reciterId);
     btn.dataset.url = url;
     btn.disabled = false;
     btn.title = "Play verse recitation";
+    if (wasPlaying) {
+      // Navigating to a new verse while audio plays: keep the flow going
+      dom.audioEl.src = url;
+      dom.audioEl.play().catch(() => {});
+      dom.playIcon.style.display = "none";
+      dom.pauseIcon.style.display = "";
+    } else if (state.autoPlay) {
+      // Auto-play on arrival (the user asked for #1)
+      dom.audioEl.src = url;
+      dom.audioEl.play().catch(() => {
+        dom.playIcon.style.display = "";
+        dom.pauseIcon.style.display = "none";
+      });
+    }
+    if (state.autoPlay || wasPlaying) {
+      dom.playIcon.style.display = "none";
+      dom.pauseIcon.style.display = "";
+    }
   } catch {
     btn.dataset.url = "";
     btn.title = "Audio unavailable offline";
@@ -424,12 +451,14 @@ function togglePlay() {
   if (!url) { toast("Audio unavailable offline"); return; }
   if (!el.src || el.paused) {
     if (el.src !== url) el.src = url;
+    state.repeatCount = 0;
     el.play().then(() => {
       dom.playIcon.style.display = "none";
       dom.pauseIcon.style.display = "";
     }).catch(() => toast("Playback couldn't start (offline?)"));
   } else {
     el.pause();
+    state.repeatCount = 0;
     dom.playIcon.style.display = "";
     dom.pauseIcon.style.display = "none";
   }
@@ -687,7 +716,7 @@ function wireEvents() {
     renderRead();
   });
 
-  // Audio
+  // Audio — playback continues / repeat / auto-advance
   dom.btnPlay.addEventListener("click", togglePlay);
   dom.reciterSelect.addEventListener("change", () => {
     state.reciterId = Number(dom.reciterSelect.value);
@@ -695,10 +724,38 @@ function wireEvents() {
     state.audioCache = {};
     renderRead();
   });
+  dom.btnAuto.addEventListener("click", () => {
+    state.autoPlay = !state.autoPlay;
+    saveJSON(LS_AUTO, state.autoPlay);
+    dom.btnAuto.classList.toggle("is-on", state.autoPlay);
+    dom.btnAuto.setAttribute("aria-pressed", String(state.autoPlay));
+    toast(state.autoPlay ? "Auto-play ON — advance to next ayah after audio" : "Auto-play OFF");
+  });
+  dom.repeatSelect.addEventListener("change", () => {
+    state.repeat = Number(dom.repeatSelect.value);
+    state.repeatCount = 0;
+    saveJSON(LS_REPEAT, state.repeat);
+    toast(`Repeat: ${state.repeat}×`);
+  });
+
   dom.audioEl.addEventListener("ended", () => {
-    dom.playIcon.style.display = "";
-    dom.pauseIcon.style.display = "none";
-    dom.audioFill.style.width = "0%";
+    if (state.repeat > 1) {
+      // Repeat this ayah the chosen number of times first
+      state.repeatCount++;
+      if (state.repeatCount < state.repeat) {
+        dom.audioEl.currentTime = 0;
+        dom.audioEl.play().catch(() => {});
+        return;
+      }
+    }
+    state.repeatCount = 0; // reset for the next verse
+    if (state.autoPlay) {
+      goNext(); // continue to the next ayah (#2)
+    } else {
+      dom.playIcon.style.display = "";
+      dom.pauseIcon.style.display = "none";
+      dom.audioFill.style.width = "0%";
+    }
   });
   dom.audioEl.addEventListener("timeupdate", () => {
     const d = dom.audioEl.duration;
@@ -762,6 +819,12 @@ function init() {
 
   populateSurahSelect();
   populateReciterSelect();
+
+  // Restore audio settings
+  dom.btnAuto.classList.toggle("is-on", state.autoPlay);
+  dom.btnAuto.setAttribute("aria-pressed", String(state.autoPlay));
+  dom.repeatSelect.value = String(state.repeat);
+
   const initChap = parseKey(state.currentKey).chapter;
   populateAyahSelect(initChap);
   dom.readSurahSelect.value = String(initChap);

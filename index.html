@@ -93,6 +93,15 @@
               <svg id="pauseIcon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style="display:none"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
             </button>
             <div class="audio-track" aria-hidden="true"><div class="audio-fill" id="audioFill"></div></div>
+            <button class="audio-toggle" id="btnAuto" title="Auto-play and continue to next ayah" aria-pressed="false">🔁</button>
+            <select id="repeatSelect" class="miniselect miniselect-narrow" aria-label="Repeat count" title="Repeat this ayah">
+              <option value="1">1×</option>
+              <option value="2">2×</option>
+              <option value="3">3×</option>
+              <option value="5">5×</option>
+              <option value="7">7×</option>
+              <option value="10">10×</option>
+            </select>
             <select id="reciterSelect" class="miniselect" aria-label="Reciter"></select>
           </div>
         </div>
