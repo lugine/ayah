@@ -130,6 +130,25 @@ const TRANS_ID = 20; // Saheeh International translation
 const LS_MEMORIZED = "ayah.memorized.v1";
 const LS_LAST = "ayah.lastVerse.v1";
 const LS_VERSECACHE = "ayah.verseCache.v1";
+const AUDIO_BASE = "https://verses.quran.com/";
+const LS_RECITER = "ayah.reciter.v1";
+const LS_AUDIOCACHE = "ayah.audioCache.v1";
+
+/* ---------- Recitations (Quran.com audio reciters) ---------- */
+const RECITERS = [
+  { id: 7,  name: "Mishari Rashid al-`Afasy" },
+  { id: 2,  name: "AbdulBaset AbdulSamad (Murattal)" },
+  { id: 1,  name: "AbdulBaset AbdulSamad (Mujawwad)" },
+  { id: 3,  name: "Abdur-Rahman as-Sudais" },
+  { id: 4,  name: "Abu Bakr al-Shatri" },
+  { id: 6,  name: "Mahmoud Khalil Al-Husary" },
+  { id: 12, name: "Mahmoud Khalil Al-Husary (Muallim)" },
+  { id: 9,  name: "Mohamed Siddiq al-Minshawi (Murattal)" },
+  { id: 8,  name: "Mohamed Siddiq al-Minshawi (Mujawwad)" },
+  { id: 10, name: "Sa`ud ash-Shuraym" },
+  { id: 5,  name: "Hani ar-Rifai" },
+  { id: 11, name: "Mohamed al-Tablawi" }
+];
 
 /* ---------- Global verse index across the whole Qur'an (1..6236) ---------- */
 const OFFSETS = [];
@@ -189,7 +208,9 @@ const state = {
   installed: false,
   deferredPrompt: null,
   chapterExpanded: null,
-  chapterCache: {}
+  chapterCache: {},
+  reciterId: Number(loadJSON(LS_RECITER, 7)),
+  audioCache: loadJSON(LS_AUDIOCACHE, {})
 };
 
 /* ---------- DOM refs ---------- */
@@ -216,7 +237,15 @@ const dom = {
   btnShuffle: $("#btnShuffle"),
   btnQuranCom: $("#btnQuranCom"),
   installBtn: $("#installBtn"),
-  toast: $("#toast")
+  toast: $("#toast"),
+  readSurahSelect: $("#readSurahSelect"),
+  readAyahSelect: $("#readAyahSelect"),
+  reciterSelect: $("#reciterSelect"),
+  btnPlay: $("#btnPlay"),
+  playIcon: $("#playIcon"),
+  pauseIcon: $("#pauseIcon"),
+  audioFill: $("#audioFill"),
+  audioEl: $("#audioEl")
 };
 
 /* ---------- Toast helper ---------- */
@@ -226,6 +255,11 @@ function toast(msg) {
   dom.toast.classList.add("show");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => dom.toast.classList.remove("show"), 2200);
+}
+
+function trimCache(obj, max) {
+  const keys = Object.keys(obj);
+  if (keys.length > max) delete obj[keys[0]];
 }
 /* ================================================================
    Verse data loading (Quran.com API with layered offline fallback)
@@ -289,6 +323,12 @@ async function renderRead() {
   dom.readSurah.textContent = surahNameFor(key);
   dom.readKey.textContent = key;
   dom.btnQuranCom.href = `https://quran.com/${key}`;
+  const chap = parseKey(key).chapter;
+  if (String(dom.readSurahSelect.value) !== String(chap)) {
+    dom.readSurahSelect.value = String(chap);
+    populateAyahSelect(chap);
+  }
+  dom.readAyahSelect.value = String(parseKey(key).ayah);
   updateMemButton();
 
   try {
@@ -308,6 +348,91 @@ async function renderRead() {
   }
   saveJSON(LS_LAST, key);
   if (state.view === "read") updateMemButton();
+  refreshAudio(key); // fire-and-forget; doesn't block the verse display
+}
+
+function populateSurahSelect() {
+  const sel = dom.readSurahSelect;
+  sel.innerHTML = "";
+  for (const s of SURAHS) {
+    const opt = document.createElement("option");
+    opt.value = String(s.id);
+    opt.textContent = `${s.id}. ${s.name}`;
+    sel.appendChild(opt);
+  }
+}
+
+function populateAyahSelect(chapterId) {
+  const s = surahById(chapterId);
+  const sel = dom.readAyahSelect;
+  sel.innerHTML = "";
+  for (let a = 1; a <= s.ayahCount; a++) {
+    const opt = document.createElement("option");
+    opt.value = String(a);
+    opt.textContent = String(a);
+    sel.appendChild(opt);
+  }
+}
+
+function populateReciterSelect() {
+  const sel = dom.reciterSelect;
+  sel.innerHTML = "";
+  for (const r of RECITERS) {
+    const opt = document.createElement("option");
+    opt.value = String(r.id);
+    opt.textContent = r.name;
+    sel.appendChild(opt);
+  }
+  sel.value = String(state.reciterId);
+}
+
+/* ---------- Recitation audio (like Quran.com) ---------- */
+async function loadAudioUrl(key, reciterId) {
+  const ck = `${reciterId}:${key}`;
+  if (state.audioCache[ck]) return state.audioCache[ck];
+  const url = `${API_BASE}/verses/by_key/${key}?audio=${reciterId}`;
+  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error("audio api " + res.status);
+  const json = await res.json();
+  const rel = json.verse && json.verse.audio && json.verse.audio.url;
+  if (!rel) throw new Error("no audio url");
+  const full = AUDIO_BASE + rel;
+  state.audioCache[ck] = full;
+  saveJSON(LS_AUDIOCACHE, state.audioCache);
+  trimCache(state.audioCache, 400);
+  return full;
+}
+
+async function refreshAudio(key) {
+  const btn = dom.btnPlay;
+  btn.disabled = true;
+  dom.audioFill.style.width = "0%";
+  try {
+    const url = await loadAudioUrl(key, state.reciterId);
+    btn.dataset.url = url;
+    btn.disabled = false;
+    btn.title = "Play verse recitation";
+  } catch {
+    btn.dataset.url = "";
+    btn.title = "Audio unavailable offline";
+  }
+}
+
+function togglePlay() {
+  const el = dom.audioEl;
+  const url = dom.btnPlay.dataset.url;
+  if (!url) { toast("Audio unavailable offline"); return; }
+  if (!el.src || el.paused) {
+    if (el.src !== url) el.src = url;
+    el.play().then(() => {
+      dom.playIcon.style.display = "none";
+      dom.pauseIcon.style.display = "";
+    }).catch(() => toast("Playback couldn't start (offline?)"));
+  } else {
+    el.pause();
+    dom.playIcon.style.display = "";
+    dom.pauseIcon.style.display = "none";
+  }
 }
 
 function goPrev() {
@@ -550,6 +675,38 @@ function wireEvents() {
   // Browse search
   dom.surahSearch.addEventListener("input", (e) => renderBrowse(e.target.value));
 
+  // Surah / ayah selector on Read
+  dom.readSurahSelect.addEventListener("change", () => {
+    const chap = Number(dom.readSurahSelect.value);
+    populateAyahSelect(chap);
+    state.currentKey = `${chap}:1`;
+    renderRead();
+  });
+  dom.readAyahSelect.addEventListener("change", () => {
+    state.currentKey = `${dom.readSurahSelect.value}:${dom.readAyahSelect.value}`;
+    renderRead();
+  });
+
+  // Audio
+  dom.btnPlay.addEventListener("click", togglePlay);
+  dom.reciterSelect.addEventListener("change", () => {
+    state.reciterId = Number(dom.reciterSelect.value);
+    saveJSON(LS_RECITER, state.reciterId);
+    state.audioCache = {};
+    renderRead();
+  });
+  dom.audioEl.addEventListener("ended", () => {
+    dom.playIcon.style.display = "";
+    dom.pauseIcon.style.display = "none";
+    dom.audioFill.style.width = "0%";
+  });
+  dom.audioEl.addEventListener("timeupdate", () => {
+    const d = dom.audioEl.duration;
+    if (d && isFinite(d)) {
+      dom.audioFill.style.width = `${(dom.audioEl.currentTime / d) * 100}%`;
+    }
+  });
+
   // Install button for Android / desktop Chrome-style prompts
   dom.installBtn.addEventListener("click", async () => {
     if (state.deferredPrompt) {
@@ -602,6 +759,13 @@ function init() {
   state.currentKey = last && indexFromKey(last) >= 0 && indexFromKey(last) < TOTAL_VERSES
     ? last
     : dailyVerseKey();
+
+  populateSurahSelect();
+  populateReciterSelect();
+  const initChap = parseKey(state.currentKey).chapter;
+  populateAyahSelect(initChap);
+  dom.readSurahSelect.value = String(initChap);
+  dom.readAyahSelect.value = String(parseKey(state.currentKey).ayah);
 
   setView("read");
   renderMemorized();

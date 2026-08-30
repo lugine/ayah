@@ -63,6 +63,11 @@ const dp = parseKey(dk);
 check("Daily verse key is valid", dp.chapter >= 1 && dp.chapter <= 114);
 check("keyFromIndex(0)==1:1", keyFromIndex(0).key === "1:1");
 check("keyFromIndex(6235)==114:6", keyFromIndex(6235).key === "114:6");
+
+  const { RECITERS } = vm.runInContext("({RECITERS})", sandbox);
+  check("Reciter list non-empty (>=12)", Array.isArray(RECITERS) && RECITERS.length >= 12);
+  check("Reciter ids are unique", new Set(RECITERS.map((r) => r.id)).size === RECITERS.length);
+  check("Reciter ids are positive integers", RECITERS.every((r) => Number.isInteger(r.id) && r.id > 0));
 check("Total surah ayah counts sum matches offsets", OFFSETS_END() === TOTAL_VERSES);
 
 function OFFSETS_END() {
