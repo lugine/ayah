@@ -135,6 +135,9 @@ const LS_RECITER = "ayah.reciter.v1";
 const LS_AUDIOCACHE = "ayah.audioCache.v1";
 const LS_AUTO = "ayah.auto.v1";
 const LS_REPEAT = "ayah.repeat.v1";
+const LS_DISPLAY = "ayah.display.v1";
+const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
+const TAFSIR_ID = 169; // Ibn Kathir (Abridged) — English
 
 /* ---------- Recitations (Quran.com audio reciters) ---------- */
 const RECITERS = [
@@ -215,7 +218,9 @@ const state = {
   audioCache: loadJSON(LS_AUDIOCACHE, {}),
   autoPlay: loadJSON(LS_AUTO, false),
   repeat: Number(loadJSON(LS_REPEAT, 1)),
-  repeatCount: 0
+  repeatCount: 0,
+  display: loadJSON(LS_DISPLAY, "translation"),
+  tafsirCache: loadJSON(LS_TAFSIRCACHE, {})
 };
 
 /* ---------- DOM refs ---------- */
@@ -252,7 +257,9 @@ const dom = {
   audioFill: $("#audioFill"),
   audioEl: $("#audioEl"),
   btnAuto: $("#btnAuto"),
-  repeatSelect: $("#repeatSelect")
+  repeatSelect: $("#repeatSelect"),
+  displaySelect: $("#displaySelect"),
+  readTafsir: $("#readTafsir")
 };
 
 /* ---------- Toast helper ---------- */
@@ -267,6 +274,25 @@ function toast(msg) {
 function trimCache(obj, max) {
   const keys = Object.keys(obj);
   if (keys.length > max) delete obj[keys[0]];
+}
+
+/* Strip footnote markers (e.g. <sup foot_note=…>1</sup>) and flatten
+   HTML into readable paragraphs. Returns plain text (safe for textContent). */
+function htmlToText(html, cap) {
+  if (!html) return "";
+  const t = html
+    .replace(/<sup[^>]*>.*?<\/sup>/gi, "")                 // footnote superscripts
+    .replace(/<(h[1-6]|p|li|br|div|tr)[^>]*>/gi, "\n")     // block elements -> newlines
+    .replace(/<[^>]+>/g, "");                                // any remaining tags
+  const d = document.createElement("div");
+  d.innerHTML = t; // decode HTML entities safely
+  const lines = (d.textContent || "")
+    .split("\n")
+    .map((l) => l.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  let out = lines.join("\n\n");
+  if (cap && out.length > cap) out = out.slice(0, cap).trimEnd() + "…";
+  return out;
 }
 /* ================================================================
    Verse data loading (Quran.com API with layered offline fallback)
@@ -308,6 +334,25 @@ async function loadVerse(key) {
   }
 }
 
+/* ---------- Tafsir (Ibn Kathir) ---------- */
+async function loadTafsir(key) {
+  if (state.tafsirCache[key]) return state.tafsirCache[key];
+  try {
+    const url = `${API_BASE}/tafsirs/${TAFSIR_ID}/by_ayah/${key}`;
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!res.ok) throw new Error("tafsir " + res.status);
+    const json = await res.json();
+    const txt = htmlToText(json.tafsir && json.tafsir.text, 7000);
+    if (!txt) throw new Error("empty tafsir");
+    state.tafsirCache[key] = txt;
+    saveJSON(LS_TAFSIRCACHE, state.tafsirCache);
+    trimCache(state.tafsirCache, 60);
+    return txt;
+  } catch {
+    return null;
+  }
+}
+
 /* ================================================================
    Read view
    ================================================================ */
@@ -338,18 +383,45 @@ async function renderRead() {
   dom.readAyahSelect.value = String(parseKey(key).ayah);
   updateMemButton();
 
+  const wantTrans = state.display === "translation" || state.display === "all";
+  const wantTafsir = state.display === "tafsir" || state.display === "all";
+  dom.readTranslation.hidden = !wantTrans;
+  dom.readTafsir.hidden = !wantTafsir;
+
   try {
     const data = await loadVerse(key);
     if (token !== readToken) return; // stale response
     dom.readArabic.textContent = data.ar || "—";
-    dom.readTranslation.textContent = data.en || "";
-    dom.readMeta.textContent = data.en
-      ? `Translation: Saheeh International`
-      : (data.ar ? "" : "Offline: showing the saved verse.");
+    if (wantTrans) {
+      dom.readTranslation.textContent = htmlToText(data.en).trim();
+      dom.readMeta.textContent = data.en
+        ? `Translation: Saheeh International`
+        : ((data.ar || data.en) ? "" : "Offline: showing the saved verse.");
+    } else {
+      dom.readTranslation.textContent = "";
+      dom.readMeta.textContent = "";
+    }
+
+    // Tafsir (only when asked for) — loaded separately so it never blocks the verse
+    if (wantTafsir) {
+      dom.readTafsir.hidden = false;
+      dom.readTafsir.innerHTML = '<div class="tf-head">Tafsir · Ibn Kathir</div><p>Loading…</p>';
+      loadTafsir(key).then((txt) => {
+        if (token !== readToken) return;
+        dom.readTafsir.innerHTML = "";
+        const head = document.createElement("div");
+        head.className = "tf-head";
+        head.textContent = "Tafsir · Ibn Kathir";
+        const body = document.createElement("p");
+        body.textContent = txt || "Tafsir unavailable offline.";
+        dom.readTafsir.appendChild(head);
+        dom.readTafsir.appendChild(body);
+      });
+    }
   } catch (err) {
     if (token !== readToken) return;
     dom.readArabic.textContent = "—";
-    dom.readTranslation.textContent = "Couldn't load this verse (offline, no saved copy).";
+    if (wantTrans) dom.readTranslation.textContent = "Couldn't load this verse (offline, no saved copy).";
   } finally {
     if (token === readToken) dom.readCard.classList.remove("is-loading");
   }
@@ -737,6 +809,11 @@ function wireEvents() {
     saveJSON(LS_REPEAT, state.repeat);
     toast(`Repeat: ${state.repeat}×`);
   });
+  dom.displaySelect.addEventListener("change", () => {
+    state.display = dom.displaySelect.value;
+    saveJSON(LS_DISPLAY, state.display);
+    renderRead();
+  });
 
   dom.audioEl.addEventListener("ended", () => {
     if (state.repeat > 1) {
@@ -824,6 +901,7 @@ function init() {
   dom.btnAuto.classList.toggle("is-on", state.autoPlay);
   dom.btnAuto.setAttribute("aria-pressed", String(state.autoPlay));
   dom.repeatSelect.value = String(state.repeat);
+  dom.displaySelect.value = state.display;
 
   const initChap = parseKey(state.currentKey).chapter;
   populateAyahSelect(initChap);

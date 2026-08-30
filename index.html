@@ -66,8 +66,18 @@
             <select id="readSurahSelect" class="miniselect" aria-label="Choose surah"></select>
             <select id="readAyahSelect" class="miniselect" aria-label="Choose ayah"></select>
           </div>
+          <div class="display-row">
+            <label for="displaySelect">Show</label>
+            <select id="displaySelect" class="miniselect" aria-label="What to show under the Arabic verse" title="What to show under the Arabic verse">
+              <option value="translation">EN translation</option>
+              <option value="arabic">Arabic only</option>
+              <option value="tafsir">Tafsir (Ibn Kathir)</option>
+              <option value="all">Translation + Tafsir</option>
+            </select>
+          </div>
           <div class="verse-arabic" id="readArabic" lang="ar" dir="rtl">…</div>
           <div class="verse-translation" id="readTranslation"></div>
+          <div class="verse-tafsir" id="readTafsir" hidden></div>
           <div class="verse-meta" id="readMeta"></div>
           <div class="read-actions">
             <button class="btn" id="btnPrev" aria-label="Previous ayah">

@@ -22,16 +22,19 @@ no subscriptions, no v0 credits.
    your devices to get the update.
 
 ## What it does
-- **Read** — one ayah at a time (Arabic + Saheeh International translation),
-  Previous / Next / Shuffle, arrow-key navigation, a new "daily verse" each day,
+- **Read** — one ayah at a time (Arabic + Saheeh International translation,
+  footnote markers stripped for clean reading), Previous / Next / Shuffle,
+  arrow-key navigation, a new "daily verse" each day,
   plus **surah + ayah dropdowns** to jump anywhere in the Qur'an
+- **Display options** — a dropdown chooses what's shown under the Arabic:
+  translation only, Arabic only, **Tafsir (Ibn Kathir)**, or both translation + tafsir
 - **Audio** — play recitation of the current ayah (like Quran.com) with 12
   reciters to choose from (Alafasy, Sudais, Al-Husary, al-Minshawi, and more);
   your choice is remembered
 - **Browse** — all 114 surahs, expandable to per-ayah chips
 - **Memorized** — mark verses (saved on-device), live count
 - **Offline** — service worker caches the shell + viewed verses and audio links;
-  curated verses work with no internet
+  curated verses work with no internet; tafsir caches recently viewed verses
 - **Installable PWA** + light/dark themes
 
 ## Run locally

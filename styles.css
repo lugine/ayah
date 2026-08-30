@@ -401,6 +401,43 @@ main { display: block; }
 }
 .miniselect:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+/* ===== Display options + tafsir ===== */
+.display-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.display-row label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.display-row .miniselect { flex: 0 0 auto; max-width: 230px; }
+
+.verse-tafsir {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--ink);
+  max-height: 340px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.tf-head {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+.verse-tafsir p { margin: 0 0 10px; white-space: pre-wrap; }
+
 /* ===== Audio ===== */
 .audio-bar {
   display: flex;

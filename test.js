@@ -68,6 +68,32 @@ check("keyFromIndex(6235)==114:6", keyFromIndex(6235).key === "114:6");
   check("Reciter list non-empty (>=12)", Array.isArray(RECITERS) && RECITERS.length >= 12);
   check("Reciter ids are unique", new Set(RECITERS.map((r) => r.id)).size === RECITERS.length);
   check("Reciter ids are positive integers", RECITERS.every((r) => Number.isInteger(r.id) && r.id > 0));
+
+  // htmlToText footnote/strip logic
+  sandbox.document = {
+    createElement() {
+      const node = { _h: "" };
+      Object.defineProperty(node, "innerHTML", {
+        get() { return this._h; },
+        set(v) { this._h = String(v); }
+      });
+      Object.defineProperty(node, "textContent", {
+        get() { return this._h.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">"); },
+        set() {}
+      });
+      return node;
+    }
+  };
+  const { htmlToText } = vm.runInContext("({htmlToText})", sandbox);
+  check("htmlToText strips sup footnotes",
+    htmlToText('In the name of Allāh,<sup foot_note=195932>1</sup> the Merciful.<sup foot_note=9>2</sup>', 2000)
+      === "In the name of Allāh, the Merciful.");
+  check("htmlToText flattens block tags to paragraphs",
+    htmlToText('<h1>Intro</h1><p>First para.</p><p>Second para.</p>', 2000)
+      .includes("First para.") && htmlToText('<h1>Intro</h1><p>First para.</p><p>Second para.</p>', 2000)
+      .includes("Second para."));
+  check("htmlToText caps long text",
+    htmlToText("word ".repeat(400), 120).length <= 121);
 check("Total surah ayah counts sum matches offsets", OFFSETS_END() === TOTAL_VERSES);
 
 function OFFSETS_END() {
@@ -91,10 +117,16 @@ console.log("\n--- Integration: verse loading pipeline ---");
     if (url.includes("by_key/1:5")) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve(fakeResponse) });
     }
+    if (url.includes("/tafsirs/169/by_ayah/1:5")) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ tafsir: { resource_id: 169, text: "<p>Explanation here.</p><sup foot_note=7>1</sup>" } })
+      });
+    }
     return Promise.reject(new Error("network down"));
   };
 
-  const { loadVerse } = vm.runInContext("({loadVerse})", sandbox);
+  const { loadVerse, loadTafsir } = vm.runInContext("({loadVerse, loadTafsir})", sandbox);
 
   // 1) network path
   const fromNetwork = await loadVerse("1:5");
@@ -109,6 +141,12 @@ console.log("\n--- Integration: verse loading pipeline ---");
   let threw = false;
   try { await loadVerse("3:200"); } catch { threw = true; }
   check("Missing verse throws when offline (graceful error state)", threw);
+
+  // 4) tafsir: flattened + footnote-free, and cached
+  const tf1 = await loadTafsir("1:5");
+  check("loadTafsir flattens HTML + strips footnotes", tf1 === "Explanation here.");
+  const tf2 = await loadTafsir("1:5");
+  check("loadTafsir served from cache", tf2 === tf1);
 
   console.log("\n" + (pass ? "ALL TESTS PASSED ✔" : "SOME TESTS FAILED ✘"));
 })();
