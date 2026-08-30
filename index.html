@@ -67,13 +67,14 @@
             <select id="readAyahSelect" class="miniselect" aria-label="Choose ayah"></select>
           </div>
           <div class="display-row">
-            <label for="displaySelect">Show</label>
-            <select id="displaySelect" class="miniselect" aria-label="What to show under the Arabic verse" title="What to show under the Arabic verse">
-              <option value="translation">EN translation</option>
-              <option value="arabic">Arabic only</option>
-              <option value="tafsir">Tafsir (Ibn Kathir)</option>
-              <option value="all">Translation + Tafsir</option>
-            </select>
+            <div class="display-trigger">
+              <input type="checkbox" id="dispEn" />
+              <label for="dispEn">English</label>
+              <input type="checkbox" id="dispAr" />
+              <label for="dispAr">Arabic</label>
+              <input type="checkbox" id="dispTafsir" />
+              <label for="dispTafsir">Tafsir</label>
+            </div>
           </div>
           <div class="verse-arabic" id="readArabic" lang="ar" dir="rtl">…</div>
           <div class="verse-translation" id="readTranslation"></div>

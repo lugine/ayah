@@ -407,15 +407,26 @@ main { display: block; }
   align-items: center;
   gap: 8px;
   margin-bottom: 12px;
+  flex-wrap: wrap;
 }
-.display-row label {
-  font-size: 12px;
+.display-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.display-trigger input[type="checkbox"] {
+  width: 16px; height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.display-trigger label {
+  font-size: 13px;
   font-weight: 600;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  color: var(--ink);
+  cursor: pointer;
+  margin-right: 10px;
 }
-.display-row .miniselect { flex: 0 0 auto; max-width: 230px; }
 
 .verse-tafsir {
   margin-top: 16px;

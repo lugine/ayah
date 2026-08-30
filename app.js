@@ -219,7 +219,7 @@ const state = {
   autoPlay: loadJSON(LS_AUTO, false),
   repeat: Number(loadJSON(LS_REPEAT, 1)),
   repeatCount: 0,
-  display: loadJSON(LS_DISPLAY, "translation"),
+  display: loadJSON(LS_DISPLAY, ["en"]),
   tafsirCache: loadJSON(LS_TAFSIRCACHE, {})
 };
 
@@ -258,7 +258,9 @@ const dom = {
   audioEl: $("#audioEl"),
   btnAuto: $("#btnAuto"),
   repeatSelect: $("#repeatSelect"),
-  displaySelect: $("#displaySelect"),
+  dispEn: $("#dispEn"),
+  dispAr: $("#dispAr"),
+  dispTafsir: $("#dispTafsir"),
   readTafsir: $("#readTafsir")
 };
 
@@ -269,6 +271,26 @@ function toast(msg) {
   dom.toast.classList.add("show");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => dom.toast.classList.remove("show"), 2200);
+}
+
+function toggleDisplay(key) {
+  // backwards-compat: older saved strings like "translation" / "all"
+  let arr = Array.isArray(state.display) ? state.display.slice() : ["en", "ar", "tafsir"];
+  if (arr.includes(key)) {
+    arr = arr.filter((k) => k !== key);
+  } else {
+    arr.push(key);
+  }
+  state.display = arr;
+  saveJSON(LS_DISPLAY, state.display);
+  renderRead();
+}
+
+function refreshDisplayCheckboxes() {
+  const v = state.display || [];
+  dom.dispEn.checked = v.includes("en");
+  dom.dispAr.checked = v.includes("ar");
+  dom.dispTafsir.checked = v.includes("tafsir");
 }
 
 function trimCache(obj, max) {
@@ -383,10 +405,15 @@ async function renderRead() {
   dom.readAyahSelect.value = String(parseKey(key).ayah);
   updateMemButton();
 
-  const wantTrans = state.display === "translation" || state.display === "all";
-  const wantTafsir = state.display === "tafsir" || state.display === "all";
+  const wantTrans = state.display.includes("en");
+  const wantTafsir = state.display.includes("tafsir");
+  const wantAr = state.display.includes("ar");
+  dom.readArabic.hidden = !wantAr;
   dom.readTranslation.hidden = !wantTrans;
   dom.readTafsir.hidden = !wantTafsir;
+  if (!wantAr && !wantTrans && !wantTafsir) {
+    dom.readMeta.textContent = "Nothing selected — tick Arabic, English or Tafsir above.";
+  }
 
   try {
     const data = await loadVerse(key);
@@ -397,8 +424,9 @@ async function renderRead() {
       dom.readMeta.textContent = data.en
         ? `Translation: Saheeh International`
         : ((data.ar || data.en) ? "" : "Offline: showing the saved verse.");
+    } else if (!wantAr && !wantTafsir) {
+      dom.readMeta.textContent = "Nothing selected — tick Arabic, English or Tafsir above.";
     } else {
-      dom.readTranslation.textContent = "";
       dom.readMeta.textContent = "";
     }
 
@@ -809,11 +837,9 @@ function wireEvents() {
     saveJSON(LS_REPEAT, state.repeat);
     toast(`Repeat: ${state.repeat}×`);
   });
-  dom.displaySelect.addEventListener("change", () => {
-    state.display = dom.displaySelect.value;
-    saveJSON(LS_DISPLAY, state.display);
-    renderRead();
-  });
+  dom.dispEn.addEventListener("change", () => toggleDisplay("en"));
+  dom.dispAr.addEventListener("change", () => toggleDisplay("ar"));
+  dom.dispTafsir.addEventListener("change", () => toggleDisplay("tafsir"));
 
   dom.audioEl.addEventListener("ended", () => {
     if (state.repeat > 1) {
@@ -901,7 +927,7 @@ function init() {
   dom.btnAuto.classList.toggle("is-on", state.autoPlay);
   dom.btnAuto.setAttribute("aria-pressed", String(state.autoPlay));
   dom.repeatSelect.value = String(state.repeat);
-  dom.displaySelect.value = state.display;
+  refreshDisplayCheckboxes();
 
   const initChap = parseKey(state.currentKey).chapter;
   populateAyahSelect(initChap);
