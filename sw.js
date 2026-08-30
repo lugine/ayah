@@ -1,12 +1,14 @@
 /* Ayah service worker — network-first for the shell (so updates flow),
    network-first for Quran.com data, cache fallback for offline use */
-const VERSION = "v7";
+const VERSION = "v8";
 const SHELL_CACHE = `ayah-shell-${VERSION}`;
 const API_CACHE = `ayah-api-${VERSION}`;
 
 const SHELL_ASSETS = [
   "./",
   "./index.html",
+  "./widget.html",
+  "./widget-page.js",
   "./styles.css",
   "./app.js",
   "./manifest.webmanifest",

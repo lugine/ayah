@@ -65,6 +65,11 @@ macOS 15.6 supports Safari web widgets:
 1. Open the URL in Safari.
 2. Right-click the page → **Add to Widget** if shown, or right-click the
    desktop → **Edit Widgets…** → search **"Ayah"** → drag it onto the desktop.
+3. **Tip:** for a clean resize-proof desktop widget, point Safari at
+   **`/widget.html`** instead of the main page. That page auto-scales the
+   Arabic + translation to fit any widget size (tested down to the longest
+   verse in the Qur'an at tiny sizes — nothing gets cut off). You can also
+   pass a fixed verse with `?key=2:255`.
 
 > Note: iOS doesn't allow websites to become home-screen *widgets* (only
 > native apps do that). This free route = full-screen app icon + the Scriptable
