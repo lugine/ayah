@@ -8,7 +8,9 @@ function makeEl() {
   return {
     checked: false, innerHTML: "", textContent: "", style: {}, dataset: {},
     classList: { add() {}, remove() {}, toggle() {} },
-    setAttribute() {}, addEventListener() {}, appendChild() {}, insertBefore() {},
+    setAttribute() {}, addEventListener() {}, insertBefore() {},
+    children: [],
+    appendChild(c) { this.children.push(c); return c; },
     querySelector() { return makeEl(); }, querySelectorAll() { return []; }
   };
 }
@@ -76,14 +78,18 @@ check("refresh sets tafsir checked", boxes["#dispTafsir"].checked === true);
   check("renderRead: ar-only → english hidden", domA.en.hidden === true);
   check("renderRead: ar-only → tafsir hidden", domA.tf.hidden === true);
 
-  // Case B: all three → everything visible
+  // Case B: all three → everything visible (verse injected so the badge path runs)
+  vm.runInContext("verseCache[state.currentKey] = { ar: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ', en: 'In the name of Allah, the Entirely Merciful, the Especially Merciful.', key: state.currentKey }", sandbox);
   vm.runInContext("state.display = ['en','ar','tafsir']", sandbox);
   await vm.runInContext("renderRead()", sandbox);
   await new Promise((r) => setTimeout(r, 10));
-  const domB = vm.runInContext("({ar: dom.readArabic, en: dom.readTranslation, tf: dom.readTafsir})", sandbox);
+  const domB = vm.runInContext("({ar: dom.readArabic, en: dom.readTranslation, tf: dom.readTafsir, key: state.currentKey})", sandbox);
   check("renderRead: all → arabic shown", domB.ar.hidden === false);
   check("renderRead: all → english shown", domB.en.hidden === false);
   check("renderRead: all → tafsir shown", domB.tf.hidden === false);
+  const badge = domB.ar.children && domB.ar.children[domB.ar.children.length - 1];
+  check("renderRead: ayah badge appended", !!badge && badge.className === "ayah-badge");
+  check("renderRead: badge shows Western numeral of ayah", !!badge && badge.textContent === String(domB.key).split(":")[1]);
 
   // Case C: none → all hidden + hint shown
   vm.runInContext("state.display = []", sandbox);

@@ -157,6 +157,26 @@ main { display: block; }
   font-family: "Noto Naskh Arabic", "Amiri", "Scheherazade New", "Traditional Arabic", serif;
   margin: 6px 0 16px;
 }
+/* Big Western-numeral ayah marker at the end of the verse (Quran.com style) */
+.ayah-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.7em;
+  height: 1.7em;
+  padding: 0 0.12em;
+  margin-inline-start: 0.4em;
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-radius: 50%;
+  font-family: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 0.72em;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--accent);
+  vertical-align: middle;
+  background: var(--card, #fff);
+}
 .verse-translation {
   font-size: 16px;
   line-height: 1.65;
@@ -402,18 +422,15 @@ main { display: block; }
 .miniselect:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* ===== Display options + tafsir ===== */
-.display-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
-}
 .display-trigger {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card, transparent);
 }
 .display-trigger input[type="checkbox"] {
   width: 16px; height: 16px;

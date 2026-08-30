@@ -418,7 +418,15 @@ async function renderRead() {
   try {
     const data = await loadVerse(key);
     if (token !== readToken) return; // stale response
-    dom.readArabic.textContent = data.ar || "—";
+    if (data.ar) {
+      dom.readArabic.textContent = data.ar;
+      const badge = document.createElement("span");
+      badge.className = "ayah-badge";
+      badge.textContent = String(parseKey(key).ayah); // Western numerals
+      dom.readArabic.appendChild(badge);
+    } else {
+      dom.readArabic.textContent = "—";
+    }
     if (wantTrans) {
       dom.readTranslation.textContent = htmlToText(data.en).trim();
       dom.readMeta.textContent = data.en

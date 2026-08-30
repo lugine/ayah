@@ -66,16 +66,6 @@
             <select id="readSurahSelect" class="miniselect" aria-label="Choose surah"></select>
             <select id="readAyahSelect" class="miniselect" aria-label="Choose ayah"></select>
           </div>
-          <div class="display-row">
-            <div class="display-trigger">
-              <input type="checkbox" id="dispEn" />
-              <label for="dispEn">English</label>
-              <input type="checkbox" id="dispAr" />
-              <label for="dispAr">Arabic</label>
-              <input type="checkbox" id="dispTafsir" />
-              <label for="dispTafsir">Tafsir</label>
-            </div>
-          </div>
           <div class="verse-arabic" id="readArabic" lang="ar" dir="rtl">…</div>
           <div class="verse-translation" id="readTranslation"></div>
           <div class="verse-tafsir" id="readTafsir" hidden></div>
@@ -96,6 +86,14 @@
           </div>
           <div class="read-aux">
             <button class="linkish" id="btnShuffle">🎲 Shuffle</button>
+            <div class="display-trigger" role="group" aria-label="Show English, Arabic or Tafsir">
+              <input type="checkbox" id="dispEn" />
+              <label for="dispEn">English</label>
+              <input type="checkbox" id="dispAr" />
+              <label for="dispAr">Arabic</label>
+              <input type="checkbox" id="dispTafsir" />
+              <label for="dispTafsir">Tafsir</label>
+            </div>
             <button class="linkish" id="btnQuranCom">Read tafsir on Quran.com ↗</button>
           </div>
           <div class="audio-bar">
