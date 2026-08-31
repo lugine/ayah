@@ -57,7 +57,9 @@ function clean(html) {
 async function loadVerse(key) {
   const url = API + "/verses/by_key/" + encodeURIComponent(key) +
     "?translations=" + TRANSLATION_ID + "&fields=text_imlaei";
-  const json = await new Request(url).loadJSON();
+  const req = new Request(url);
+  req.timeout = 12; // never hang a widget refresh
+  const json = await req.loadJSON();
   const v = (json && json.verse) || (json && json.verses && json.verses[0]);
   if (!v) throw new Error("bad response");
   return {
@@ -82,91 +84,135 @@ function writeCache(data) {
   } catch (e) {}
 }
 
-/* ---------- main ---------- */
-const pick = dailyKey();
-let data = null;
-let offline = false;
-try {
-  data = await loadVerse(pick.key);
-  writeCache(data);
-} catch (e) {
-  const c = readCache();
-  if (c) { data = c; offline = true; }
-}
-if (!data) {
-  data = {
-    key: pick.key,
-    ar: "",
-    en: "Open the Ayah app once while online — then this widget works offline too.",
-  };
+/* ---------- widget builders ---------- */
+function baseWidget() {
+  const w = new ListWidget();
+  const grad = new LinearGradient();
+  grad.locations = [0, 1];
+  grad.colors = [new Color("#0f3d2e"), new Color("#0a2b20")];
+  w.backgroundGradient = grad;
+  w.setPadding(13, 16, 11, 16);
+  w.url = APP_URL; // tapping the widget opens the app
+  return w;
 }
 
-const shownKey = data.key || pick.key;
-const chapterNum = parseInt(shownKey.split(":")[0], 10) || pick.chapter;
-const surahName = NAMES[chapterNum - 1] || "";
-const ayahNum = shownKey.split(":")[1];
+function renderVerse(data, offline) {
+  const w = baseWidget();
+  const shownKey = data.key || dailyKey().key;
+  const chapterNum = parseInt(shownKey.split(":")[0], 10) || 1;
+  const surahName = NAMES[chapterNum - 1] || "";
+  const ayahNum = shownKey.split(":")[1] || "?";
+  const fam = (config && config.widgetFamily) || "medium";
+  const small = fam === "small";
+  const large = fam === "large" || fam === "extraLarge";
 
-/* ---------- render ---------- */
-const w = new ListWidget();
-const grad = new LinearGradient();
-grad.locations = [0, 1];
-grad.colors = [new Color("#0f3d2e"), new Color("#0a2b20")];
-w.backgroundGradient = grad;
-w.setPadding(13, 16, 11, 16);
-w.url = APP_URL; // tapping the widget opens the app
+  // Header: surah · reference
+  const head = w.addText(surahName + "  ·  " + shownKey);
+  head.font = Font.semiboldSystemFont(small ? 10 : 11);
+  head.textColor = new Color("#9fe8c2");
+  head.centerAlignText();
+  w.addSpacer(5);
 
-const white = new Color("#f2faf5");
-const mint = new Color("#9fe8c2");
-const dim = new Color("#bcd9cb");
+  // Arabic + big Western ayah number in ornate brackets
+  const arText = (data.ar ? data.ar + "  " : "") + "﴿" + ayahNum + "﴾";
+  const ar = w.addText(arText);
+  ar.font = Font.regularSystemFont(large ? 20 : small ? 15 : 17);
+  ar.textColor = new Color("#f2faf5");
+  ar.centerAlignText();
+  ar.lineLimit = large ? 6 : small ? 3 : 4;
+  ar.minimumScaleFactor = 0.7;
 
-const fam = config.widgetFamily || "medium";
-const small = fam === "small";
-const large = fam === "large";
+  w.addSpacer(7);
 
-// Header: surah · reference
-const head = w.addText(surahName + "  ·  " + shownKey);
-head.font = Font.semiboldSystemFont(small ? 10 : 11);
-head.textColor = mint;
-head.centerAlignText();
-w.addSpacer(5);
+  // Translation (medium + large only)
+  if (!small && data.en) {
+    const en = w.addText(data.en);
+    en.font = Font.italicSystemFont(large ? 14 : 12);
+    en.textColor = new Color("#bcd9cb");
+    en.centerAlignText();
+    en.lineLimit = large ? 8 : 4;
+    en.minimumScaleFactor = 0.75;
+  }
 
-// Arabic + big Western ayah number in ornate brackets
-const arText = (data.ar ? data.ar + "  " : "") + "﴿" + ayahNum + "﴾";
-const ar = w.addText(arText);
-ar.font = Font.regularSystemFont(large ? 20 : small ? 15 : 17);
-ar.textColor = white;
-ar.centerAlignText();
-ar.lineLimit(large ? 6 : small ? 3 : 4);
-ar.minimumScaleFactor = 0.7;
+  w.addSpacer();
 
-w.addSpacer(7);
+  // Footer
+  if (!small) {
+    const foot = w.addText(offline ? "offline — tap to open" : "daily ayah — tap to open");
+    foot.font = Font.systemFont(9);
+    foot.textColor = new Color("#bcd9cb");
+    foot.textOpacity = 0.7;
+    foot.centerAlignText();
+  }
 
-// Translation (medium + large only)
-if (!small && data.en) {
-  const en = w.addText(data.en);
-  en.font = Font.italicSystemFont(large ? 14 : 12);
-  en.textColor = dim;
-  en.centerAlignText();
-  en.lineLimit(large ? 8 : 4);
-  en.minimumScaleFactor = 0.75;
+  w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
+  return w;
 }
 
-w.addSpacer();
-
-// Footer
-if (!small) {
-  const foot = w.addText(offline ? "offline — tap to open" : "daily ayah — tap to open");
-  foot.font = Font.systemFont(9);
-  foot.textColor = dim;
-  foot.textOpacity = 0.7;
-  foot.centerAlignText();
+/* If anything unexpected fails, the widget itself shows the error (instead of
+   a blank or broken widget) so it can be screenshotted & fixed. */
+function errorWidget(e) {
+  const w = baseWidget();
+  const t = w.addText("⚠️ Ayah widget error");
+  t.font = Font.boldSystemFont(11);
+  t.textColor = new Color("#ffb4a9");
+  t.centerAlignText();
+  w.addSpacer(4);
+  const m = w.addText(String((e && e.message) || e).slice(0, 150));
+  m.font = Font.systemFont(10);
+  m.textColor = new Color("#f2faf5");
+  m.centerAlignText();
+  m.lineLimit = 5;
+  w.addSpacer();
+  const f = w.addText("screenshot this & tell Cline");
+  f.font = Font.systemFont(8);
+  f.textColor = new Color("#bcd9cb");
+  f.centerAlignText();
+  return w;
 }
 
-w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
-
-if (config.runsInWidget) {
-  Script.setWidget(w);
-} else {
-  await w.presentMedium(); // in-app preview
+async function buildWidget() {
+  const pick = dailyKey();
+  let data = null;
+  let offline = false;
+  try {
+    data = await loadVerse(pick.key);
+    writeCache(data);
+  } catch (e) {
+    const c = readCache();
+    if (c) { data = c; offline = true; }
+  }
+  if (!data) {
+    data = {
+      key: pick.key,
+      ar: "",
+      en: "Open the Ayah app once while online — then this widget works offline too.",
+    };
+  }
+  return renderVerse(data, offline);
 }
-Script.complete();
+
+/* Entry point — async IIFE (no top-level await → works on every Scriptable
+   version). Any crash falls back to the error widget instead of dying. */
+const __ayahDone = (async () => {
+  let w = null;
+  try {
+    w = await buildWidget();
+  } catch (e) {
+    w = errorWidget(e);
+  }
+  try {
+    if (typeof config !== "undefined" && config && config.runsInWidget) {
+      Script.setWidget(w);
+    } else {
+      await w.presentMedium(); // in-app preview
+    }
+  } catch (e2) {
+    try {
+      if (typeof config !== "undefined" && config && config.runsInWidget) {
+        Script.setWidget(errorWidget(e2));
+      }
+    } catch (e3) {}
+  }
+  Script.complete();
+})();

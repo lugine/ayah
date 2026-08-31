@@ -11,16 +11,14 @@ function check(name, cond) {
 
 /* ---- Scriptable API stubs ---- */
 class FakeText {
-  constructor() { this.text = ""; this._font = null; this._color = null; this._align = null; this._lineLimit = null; this._opacity = 1; }
-  font(v) { this._font = v; return this; }
-  textColor(v) { this._color = v; return this; }
-  centerAlignText() { this._align = "c"; return this; }
-  lineLimit(n) { this._lineLimit = n; return this; }
-  minimumScaleFactor(n) { return this; }
-  textOpacity(o) { this._opacity = o; return this; }
+  constructor() { this.text = ""; this.font = null; this.textColor = null; this.lineLimit = null; this.minimumScaleFactor = null; this.textOpacity = 1; }
+  centerAlignText() { return this; }
 }
 class ListWidget {
-  constructor() { this.children = []; this._url = null; this._grad = null; this._refresh = null; }
+  constructor() {
+    if (ListWidget.failNext > 0) { ListWidget.failNext--; throw new Error("injected boom"); }
+    this.children = []; this._url = null; this._grad = null; this._refresh = null;
+  }
   addText(t) { const ft = new FakeText(); ft.text = t; this.children.push(ft); return ft; }
   addSpacer() {}
   setPadding() {}
@@ -35,6 +33,7 @@ class LinearGradient { constructor() { this.colors = []; this.locations = []; } 
 const Font = {
   systemFont: (s) => ({ k: "sys", s }), regularSystemFont: (s) => ({ k: "reg", s }),
   semiboldSystemFont: (s) => ({ k: "semi", s }), italicSystemFont: (s) => ({ k: "ital", s }),
+  boldSystemFont: (s) => ({ k: "bold", s }),
 };
 class Request {
   constructor(url) { Request.lastUrl = url; }
@@ -69,8 +68,8 @@ function runScript(family, runsInWidget) {
   };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  // Scriptable allows top-level await; classic vm Scripts don't → wrap in async IIFE
-  return vm.runInContext("(async () => {\n" + code + "\n})()", sandbox, { filename: "scriptable-widget.js" })
+  // Script runs to completion, then awaits its own done-promise (deterministic)
+  return vm.runInContext("(async () => {\n" + code + "\nawait __ayahDone;\n})()", sandbox, { filename: "scriptable-widget.js" })
     .then(() => ({ setWidgetArg, completed, files }));
 }
 
@@ -137,6 +136,13 @@ function appKey() {
   Request.mode = "ok";
   r = await runScript("medium", false);
   check("in-app run completes without setWidget", r.completed && !r.setWidgetArg);
+
+  // 6) catastrophic failure → error widget renders on screen, still completes
+  ListWidget.failNext = 1;
+  r = await runScript("medium", true);
+  ListWidget.failNext = 0;
+  check("catastrophic error → error widget shown on screen", !!r.setWidgetArg && r.setWidgetArg.children.some((c) => (c.text || "").includes("⚠")));
+  check("catastrophic error → still completes cleanly", !!r.completed);
 
   console.log("—");
   console.log("PASS " + pass + " / " + (pass + fail));
