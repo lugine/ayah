@@ -107,7 +107,13 @@ created for this). One-time setup **on each device**:
    - Name: `ayah` · Expiration: 1 year
    - Repository access: **Only select repositories** → `ayah-sync`
    - Permissions → Contents → **Read and write**
-3. Paste the token into the app → **Save**
+3. Paste the token into the app → **Save** (then tap **✔ Test** — a step-by-step
+   check of the token will explain exactly what's right or wrong, e.g.
+   read-only permissions, wrong repo selected, or an invalid token)
+
+If sync isn't working, tap **✔ Test** in ⚙ Setup — the app now reports the exact
+GitHub error (401 invalid, 403 read-only token, 404 token can't see the repo,
+or HTTP details) instead of a generic "offline", so the fix is clear right there.
 
 That's it — after that, syncing is automatic (on open, on return to the
 tab, every 90 s, and on every change, debounced 1.5 s). Rules: stars merge

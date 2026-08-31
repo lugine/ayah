@@ -281,6 +281,7 @@ const dom = {
   syncPanel: $("#syncPanel"),
   syncToken: $("#syncToken"),
   syncSave: $("#syncSave"),
+  syncTest: $("#syncTest"),
   syncStatus: $("#syncStatus")
 };
 
@@ -1032,6 +1033,22 @@ function ghHeaders(extra) {
   }, extra || {});
 }
 
+/* Try to pull a readable reason out of a GitHub API error response. */
+async function ghErr(res) {
+  try {
+    const body = await res.json();
+    const msg = (body && (body.message || body.error)) || res.statusText;
+    return `${res.status}: ${msg}`;
+  } catch {
+    return String(res.status);
+  }
+}
+async function syncFail(res, label) {
+  const err = await ghErr(res);
+  syncStatusMsg(`${label} (${err}) — ⚙ Setup → Test`);
+  console.warn("[Ayah sync]", label, err);
+}
+
 function deviceId() {
   if (!state.syncMeta.deviceId) {
     state.syncMeta.deviceId = "dev-" + Math.random().toString(36).slice(2, 10);
@@ -1080,17 +1097,18 @@ async function pushSync() {
         headers: ghHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(body)
       });
-      if (res.status === 409 && attempt < 2) {
-        // Your other device wrote first — pull, union-merge locally, retry.
+      if ((res.status === 409 || res.status === 422) && attempt < 2) {
+        // Your other device wrote first (409) or we didn't know the sha yet (422):
+        // pull the latest, union-merge locally, retry with the fresh sha.
+        syncSha = null;
         const remote = await pullSync(false);
         if (remote) applyRemote(remote, false);
         continue;
       }
-      if (res.status === 401 || res.status === 403) {
-        syncStatusMsg("token problem — tap ⚙ Setup");
-        break;
-      }
-      if (!res.ok) throw new Error("sync " + res.status);
+      if (res.status === 401) { await syncFail(res, "✗ token invalid or revoked"); break; }
+      if (res.status === 403) { await syncFail(res, "✗ token can't write (needs Contents Read+write)"); break; }
+      if (res.status === 404) { await syncFail(res, "✗ token can't reach lugine/ayah-sync"); break; }
+      if (!res.ok) { await syncFail(res, "✗ sync failed"); break; }
       const done = await res.json();
       if (done && done.content && done.content.sha) syncSha = done.content.sha;
       state.syncMeta.savedAt = Date.now();
@@ -1098,11 +1116,11 @@ async function pushSync() {
       const t = new Date();
       const hh = String(t.getHours()).padStart(2, "0");
       const mm = String(t.getMinutes()).padStart(2, "0");
-      syncStatusMsg(`synced ${hh}:${mm}`);
+      syncStatusMsg("synced " + hh + ":" + mm);
       ok = true;
     }
   } catch (e) {
-    syncStatusMsg("offline — will retry");
+    syncStatusMsg("network error — will retry");
   } finally {
     state.syncBusy = false;
   }
@@ -1114,12 +1132,10 @@ async function pullSync(applyPosition) {
     const res = await fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${SYNC_FILE}?t=${Date.now()}`, {
       headers: ghHeaders()
     });
-    if (res.status === 404) { syncSha = null; return null; } // first ever sync — nothing yet
-    if (res.status === 401 || res.status === 403) {
-      syncStatusMsg("token problem — tap ⚙ Setup");
-      return null;
-    }
-    if (!res.ok) throw new Error("sync " + res.status);
+    if (res.status === 404) { syncSha = null; return null; } // no cloud record yet — we'll create it
+    if (res.status === 401) { await syncFail(res, "✗ token invalid or revoked"); return null; }
+    if (res.status === 403) { await syncFail(res, "✗ token can't read (needs Contents access)"); return null; }
+    if (!res.ok) { await syncFail(res, "✗ pull failed"); return null; }
     const meta = await res.json();
     syncSha = meta.sha || null;
     let remote = null;
@@ -1129,14 +1145,78 @@ async function pullSync(applyPosition) {
       const t = new Date();
       const hh = String(t.getHours()).padStart(2, "0");
       const mm = String(t.getMinutes()).padStart(2, "0");
-      syncStatusMsg(`synced ${hh}:${mm}`);
+      syncStatusMsg("synced " + hh + ":" + mm);
       return remote;
     }
     return null;
-  } catch {
-    syncStatusMsg("offline — using this device");
+  } catch (e) {
+    syncStatusMsg("network error — will retry");
     return null;
   }
+}
+
+/* Diagnose a saved token against GitHub, step by step. Safe: the probe file
+   it creates is deleted immediately after. */
+async function syncTest() {
+  if (!state.syncToken) { syncStatusMsg("paste a token first — ⚙ Setup"); return; }
+  syncStatusMsg("testing token…");
+  const parts = [];
+  try {
+    // 1. Is the token itself valid? Who is it?
+    let r = await fetch(`${GH_API}/user`, { headers: ghHeaders() });
+    if (r.ok) {
+      const u = await r.json();
+      parts.push("✓ token OK (“" + u.login + "”)");
+    } else {
+      parts.push(`✗ 401 — token invalid or revoked (${await ghErr(r)})`);
+      syncStatusMsg(parts.join(" · "));
+      return;
+    }
+    // 2. Can it see the sync repo at all?
+    r = await fetch(`${GH_API}/repos/${SYNC_REPO}`, { headers: ghHeaders() });
+    parts.push(r.ok ? "✓ can see lugine/ayah-sync" : `✗ ${r.status} — repo not visible to token`);
+
+    // 3. Can it read the sync file?
+    r = await fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${SYNC_FILE}?t=${Date.now()}`, { headers: ghHeaders() });
+    if (r.ok) {
+      const m = await r.json();
+      syncSha = m.sha || null;
+      parts.push("✓ can read sync.json");
+    } else if (r.status === 404) {
+      parts.push("✓ read OK (file not created yet — will be)");
+    } else {
+      parts.push(`✗ ${r.status} — read blocked`);
+    }
+
+    // 4. Can it write? (create a tiny probe, then delete it)
+    const probe = "_probe-" + deviceId() + ".txt";
+    r = await fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${probe}`, {
+      method: "PUT",
+      headers: ghHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ message: "probe", content: b64encode("1"), branch: "main" })
+    });
+    if (r.ok) {
+      parts.push("✓ can write (probe removed)");
+      const m = await r.json();
+      if (m && m.content && m.content.sha) {
+        fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${probe}`, {
+          method: "DELETE",
+          headers: ghHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ message: "probe cleanup", sha: m.content.sha })
+        }).catch(() => {});
+      }
+    } else if (r.status === 403) {
+      parts.push("✗ 403 — write blocked: token needs Contents permission → Read and write (it's read-only now)");
+    } else if (r.status === 404) {
+      parts.push("✗ 404 — write blocked: token's 'Only select repositories' doesn't include ayah-sync");
+    } else {
+      parts.push(`✗ ${r.status} — write blocked (${await ghErr(r)})`);
+    }
+  } catch (e) {
+    parts.push("network error during test");
+  }
+  syncStatusMsg(parts.join(" · "));
+  console.warn("[Ayah sync test]", parts.join(" · "));
 }
 function applyRemote(remote, applyPosition) {
   let touched = false;
@@ -1237,6 +1317,9 @@ function wireSync() {
       if (!pulled) await pushSync();       // nothing there yet → seed it
       if (dom.syncPanel) dom.syncPanel.classList.remove("is-open");
     });
+  }
+  if (dom.syncTest) {
+    dom.syncTest.addEventListener("click", syncTest);
   }
   if (dom.syncNow) {
     dom.syncNow.addEventListener("click", async () => {
