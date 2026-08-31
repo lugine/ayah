@@ -48,7 +48,10 @@ body {
 .app {
   max-width: 640px;
   margin: 0 auto;
-  padding: 20px 16px calc(28px + env(safe-area-inset-bottom));
+  padding: calc(20px + env(safe-area-inset-top))
+           calc(16px + env(safe-area-inset-left))
+           calc(28px + env(safe-area-inset-bottom))
+           calc(16px + env(safe-area-inset-right));
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -162,6 +165,7 @@ main { display: block; }
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  flex-wrap: wrap;
   margin-bottom: 18px;
 }
 .surah-name { font-weight: 700; font-size: 15px; }
@@ -180,6 +184,7 @@ main { display: block; }
   text-align: center;
   font-family: "Noto Naskh Arabic", "Amiri", "Scheherazade New", "Traditional Arabic", serif;
   margin: 6px 0 16px;
+  overflow-wrap: anywhere;
 }
 /* Big Western-numeral ayah marker at the end of the verse (Quran.com style) */
 .ayah-badge {
@@ -207,6 +212,7 @@ main { display: block; }
   color: var(--ink);
   text-align: center;
   padding: 0 4px;
+  overflow-wrap: anywhere;
 }
 .verse-meta {
   text-align: center;
@@ -421,10 +427,29 @@ main { display: block; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 @media (max-width: 420px) {
-  .app { padding: 16px 12px 24px; }
+  .app {
+    padding: calc(16px + env(safe-area-inset-top))
+             calc(12px + env(safe-area-inset-left))
+             24px
+             calc(12px + env(safe-area-inset-right));
+  }
   .brand-sub { display: none; }
   .read-actions { grid-template-columns: 1fr; }
   .read-actions .btn-toggle { order: -1; }
+  .widget-card { padding: 18px 14px; }
+  .tab { font-size: 13px; padding: 9px 8px; }
+}
+
+/* ===== Narrow phones: never let the audio bar crowd or clip ===== */
+@media (max-width: 560px) {
+  .audio-bar { gap: 8px; }
+  /* Keep play + 🔁 + repeat + speed on the top line (their natural DOM order),
+     then give the progress bar and reciter picker their own full-width rows. */
+  .audio-track { order: 5; flex-basis: 100%; }
+  .audio-bar .miniselect { max-width: none; }
+  .audio-bar #reciterSelect { order: 6; flex-basis: 100%; }
+  .read-selector { flex-wrap: wrap; }
+  .read-selector .miniselect { flex: 1 1 calc(50% - 4px); }
 }
 
 /* ===== Surah / ayah selector (Read) ===== */
@@ -541,6 +566,7 @@ main { display: block; }
 /* ===== Audio ===== */
 .audio-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   margin-top: 14px;
@@ -559,7 +585,8 @@ main { display: block; }
 }
 .audio-play:disabled { opacity: 0.45; cursor: default; }
 .audio-track {
-  flex: 1;
+  flex: 1 1 140px;
+  min-width: 80px;
   height: 6px;
   background: var(--line);
   border-radius: 999px;
@@ -572,7 +599,7 @@ main { display: block; }
   border-radius: 999px;
   transition: width 0.2s linear;
 }
-.audio-bar .miniselect { flex: 0 0 auto; max-width: 170px; }
+.audio-bar .miniselect { flex: 0 1 auto; max-width: 170px; min-width: 0; }
 .miniselect-narrow { max-width: 64px !important; }
 .audio-toggle {
   flex: 0 0 auto;

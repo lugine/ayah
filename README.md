@@ -38,6 +38,9 @@ no subscriptions, no v0 credits.
 - **Installable PWA** + light/dark themes
 - **Refresh button** (↻ in the top bar) — tap anytime to check for a new build,
   update the service worker, and reload to the latest version instantly
+- **Fits every iPhone** — responsive layout with safe-area (notch/home-indicator)
+  padding; on narrow screens the audio bar rearranges into clean rows so no
+  control is ever cut off; long ayahs and words wrap instead of overflowing
 
 ## Run locally
 ```bash
