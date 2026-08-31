@@ -1,6 +1,6 @@
 /* Ayah service worker — network-first for the shell (so updates flow),
    network-first for Quran.com data, cache fallback for offline use */
-const VERSION = "v8";
+const VERSION = "v11";
 const SHELL_CACHE = `ayah-shell-${VERSION}`;
 const API_CACHE = `ayah-api-${VERSION}`;
 
@@ -74,22 +74,20 @@ self.addEventListener("fetch", (event) => {
       return;
     }
 
-    // Everything else (CSS/JS/icons): serve cache instantly for speed, but
-    // refresh from the network in the background so the next open is new.
+    // Everything else (CSS/JS/icons): network-first so pushed updates apply
+    // on the very next open; falls back to cache when offline.
     event.respondWith(
-      caches.open(SHELL_CACHE).then(async (cache) => {
-        const cached = await cache.match(req);
-        const network = fetch(req)
-          .then((res) => {
-            if (res && res.ok) {
-              const copy = res.clone();
-              cache.put(req, copy);
-            }
-            return res;
-          })
-          .catch(() => cached);
-        return cached || network;
-      })
+      fetch(req)
+        .then((res) => {
+          if (res && res.ok) {
+            const copy = res.clone();
+            caches.open(SHELL_CACHE).then((c) => c.put(req, copy).catch(() => {}));
+          }
+          return res;
+        })
+        .catch(() =>
+          caches.open(SHELL_CACHE).then((cache) => cache.match(req))
+        )
     );
     return;
   }

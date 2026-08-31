@@ -29,6 +29,10 @@
 
 * { box-sizing: border-box; }
 
+/* The `hidden` attribute always wins — no CSS may override it */
+[hidden] { display: none !important; }
+
+
 html, body { margin: 0; padding: 0; }
 
 body {
@@ -443,6 +447,54 @@ main { display: block; }
   color: var(--ink);
   cursor: pointer;
   margin-right: 10px;
+}
+
+/* ===== Sync (phone <-> Mac) ===== */
+.sync-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+.sync-btn {
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sync-btn:hover { background: var(--accent-soft); }
+.sync-panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-top: 10px;
+  font-size: 13px;
+  display: none;
+}
+.sync-panel.is-open { display: block; }
+.sync-panel input {
+  flex: 1;
+  min-width: 130px;
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+}
+.sync-note {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .verse-tafsir {

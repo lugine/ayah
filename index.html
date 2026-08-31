@@ -140,6 +140,24 @@
     </main>
 
     <footer class="foot">
+      <div class="sync-row">
+        <button class="sync-btn" id="syncNow" type="button">⟳ Sync now</button>
+        <button class="sync-btn" id="syncSetup" type="button">⚙ Setup</button>
+        <span class="sync-note" id="syncStatus">Sync: setup needed</span>
+      </div>
+      <div class="sync-panel" id="syncPanel">
+        <p class="sync-note"><b>One-time setup on each device (iPhone + Mac):</b></p>
+        <p class="sync-note">1. Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">github.com → new token ↗</a><br>
+        2. Token name: <b>ayah</b> · Expiration: <b>1 year</b><br>
+        3. Repository access → <b>Only select repositories</b> → pick <b>ayah-sync</b><br>
+        4. Permissions → <b>Contents</b> → <b>Read and write</b> → Generate token<br>
+        5. Copy the code and paste it here:</p>
+        <div class="sync-row">
+          <input id="syncToken" type="password" placeholder="github_pat_… or ghp_…" autocomplete="off" spellcheck="false" />
+          <button class="sync-btn" id="syncSave" type="button">Save</button>
+        </div>
+        <p class="sync-note">The token lives only in this device's browser storage — never in the app's code — and unlocks nothing except the private <b>ayah-sync</b> repo.</p>
+      </div>
       <span>Data: Quran.com · Saved on this device automatically</span>
     </footer>
   </div>

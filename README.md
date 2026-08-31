@@ -88,4 +88,24 @@ macOS 15.6 supports Safari web widgets:
 
 ## Data & privacy
 Quran text from the public Quran.com API. Memorized list + last verse live
-only in your browser's `localStorage` — nothing leaves the device.
+only in your browser's `localStorage` — nothing leaves the device unless
+you turn on Sync (below).
+
+## Device sync (iPhone ⇄ Mac)
+Your stars, last-read verse, reciter, repeat and display settings can sync
+between devices through **your own private GitHub repo** (`lugine/ayah-sync`,
+created for this). One-time setup **on each device**:
+
+1. In the app, tap **⚙ Setup** (bottom of the page)
+2. Open the token link: github.com → Settings → Developer settings →
+   Fine-grained tokens → **Generate new token**
+   - Name: `ayah` · Expiration: 1 year
+   - Repository access: **Only select repositories** → `ayah-sync`
+   - Permissions → Contents → **Read and write**
+3. Paste the token into the app → **Save**
+
+That's it — after that, syncing is automatic (on open, on return to the
+tab, every 90 s, and on every change, debounced 1.5 s). Rules: stars merge
+as a **union** (never lost), settings are last-write-wins, and conflicting
+writes are auto-merged via the repo's compare-and-swap. The token lives
+only in that device's browser storage and unlocks nothing but `ayah-sync`.

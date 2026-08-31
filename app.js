@@ -132,11 +132,16 @@ const LS_LAST = "ayah.lastVerse.v1";
 const LS_VERSECACHE = "ayah.verseCache.v1";
 const AUDIO_BASE = "https://verses.quran.com/";
 const LS_RECITER = "ayah.reciter.v1";
-const LS_AUDIOCACHE = "ayah.audioCache.v1";
+const LS_AUDIOCACHE = "ayah.audioCache.v2"; // v2: invalidates broken mirror URLs cached by older versions
 const LS_AUTO = "ayah.auto.v1";
 const LS_REPEAT = "ayah.repeat.v1";
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
+// Declared here, not in the sync section: `state` reads them at line ~224,
+// long before the sync section at the bottom would execute (TDZ crash otherwise).
+const LS_SYNC_META = "ayah.syncMeta.v1";
+const LS_SYNC_ON = "ayah.syncOn.v1";
+const LS_SYNC_TOKEN = "ayah.syncToken.v1";
 const TAFSIR_ID = 169; // Ibn Kathir (Abridged) — English
 
 /* ---------- Recitations (Quran.com audio reciters) ---------- */
@@ -220,7 +225,11 @@ const state = {
   repeat: Number(loadJSON(LS_REPEAT, 1)),
   repeatCount: 0,
   display: loadJSON(LS_DISPLAY, ["en"]),
-  tafsirCache: loadJSON(LS_TAFSIRCACHE, {})
+  tafsirCache: loadJSON(LS_TAFSIRCACHE, {}),
+  syncOn: loadJSON(LS_SYNC_ON, true),
+  syncMeta: loadJSON(LS_SYNC_META, { savedAt: 0, deviceId: null }),
+  syncToken: loadJSON(LS_SYNC_TOKEN, ""),
+  syncBusy: false
 };
 
 /* ---------- DOM refs ---------- */
@@ -261,7 +270,13 @@ const dom = {
   dispEn: $("#dispEn"),
   dispAr: $("#dispAr"),
   dispTafsir: $("#dispTafsir"),
-  readTafsir: $("#readTafsir")
+  readTafsir: $("#readTafsir"),
+  syncNow: $("#syncNow"),
+  syncSetup: $("#syncSetup"),
+  syncPanel: $("#syncPanel"),
+  syncToken: $("#syncToken"),
+  syncSave: $("#syncSave"),
+  syncStatus: $("#syncStatus")
 };
 
 /* ---------- Toast helper ---------- */
@@ -283,6 +298,7 @@ function toggleDisplay(key) {
   }
   state.display = arr;
   saveJSON(LS_DISPLAY, state.display);
+  queuePush();
   renderRead();
 }
 
@@ -462,6 +478,7 @@ async function renderRead() {
     if (token === readToken) dom.readCard.classList.remove("is-loading");
   }
   saveJSON(LS_LAST, key);
+  queuePush(); // last-read position follows you across devices
   if (state.view === "read") updateMemButton();
   refreshAudio(key); // fire-and-forget; doesn't block the verse display
 }
@@ -511,7 +528,14 @@ async function loadAudioUrl(key, reciterId) {
   const json = await res.json();
   const rel = json.verse && json.verse.audio && json.verse.audio.url;
   if (!rel) throw new Error("no audio url");
-  const full = AUDIO_BASE + rel;
+  // The API returns three shapes: plain CDN paths ("Alafasy/mp3/…"),
+  // protocol-relative mirrors ("//mirrors.quranicaudio.com/…") and
+  // occasionally absolute URLs. Handle all three or playback breaks.
+  const relStr = String(rel).trim();
+  let full;
+  if (relStr.startsWith("//")) full = "https:" + relStr;
+  else if (/^https?:\/\//i.test(relStr)) full = relStr;
+  else full = AUDIO_BASE + relStr;
   state.audioCache[ck] = full;
   saveJSON(LS_AUDIOCACHE, state.audioCache);
   trimCache(state.audioCache, 400);
@@ -596,6 +620,7 @@ function toggleMemorize() {
     toast("Marked as memorized ★");
   }
   saveJSON(LS_MEMORIZED, [...state.memorized]);
+  queuePush();
   updateMemButton();
   renderMemorized();
 }
@@ -830,11 +855,14 @@ function wireEvents() {
     state.reciterId = Number(dom.reciterSelect.value);
     saveJSON(LS_RECITER, state.reciterId);
     state.audioCache = {};
+    saveJSON(LS_AUDIOCACHE, state.audioCache);
+    queuePush();
     renderRead();
   });
   dom.btnAuto.addEventListener("click", () => {
     state.autoPlay = !state.autoPlay;
     saveJSON(LS_AUTO, state.autoPlay);
+    queuePush();
     dom.btnAuto.classList.toggle("is-on", state.autoPlay);
     dom.btnAuto.setAttribute("aria-pressed", String(state.autoPlay));
     toast(state.autoPlay ? "Auto-play ON — advance to next ayah after audio" : "Auto-play OFF");
@@ -843,6 +871,7 @@ function wireEvents() {
     state.repeat = Number(dom.repeatSelect.value);
     state.repeatCount = 0;
     saveJSON(LS_REPEAT, state.repeat);
+    queuePush();
     toast(`Repeat: ${state.repeat}×`);
   });
   dom.dispEn.addEventListener("change", () => toggleDisplay("en"));
@@ -912,6 +941,255 @@ function registerSW() {
 }
 
 /* ================================================================
+   Sync (iPhone <-> Mac) — through your own private GitHub repo.
+   Backend: lugine/ayah-sync (private) → sync.json via the GitHub
+   Contents API, authorized by a personal token YOU paste per device.
+   The token lives only in each device's localStorage — never in the
+   code. Rules: last-write-wins for settings; memorized stars merge
+   as a UNION so a star can never be lost. Fails silent, always.
+   ================================================================ */
+const GH_API = "https://api.github.com";
+const SYNC_REPO = "lugine/ayah-sync";
+const SYNC_FILE = "sync.json";
+let syncSha = null; // last-known blob sha — compare-and-swap for writes
+// LS_SYNC_META / LS_SYNC_ON / LS_SYNC_TOKEN live in the top constants block.
+
+function syncReady() { return !!(state.syncOn && state.syncToken); }
+function b64encode(str) { return btoa(unescape(encodeURIComponent(str))); }
+function b64decode(str) { return decodeURIComponent(escape(String(str).replace(/\s+/g, ""))); }
+function ghHeaders(extra) {
+  return Object.assign({
+    Authorization: "Bearer " + state.syncToken,
+    Accept: "application/vnd.github+json"
+  }, extra || {});
+}
+
+function deviceId() {
+  if (!state.syncMeta.deviceId) {
+    state.syncMeta.deviceId = "dev-" + Math.random().toString(36).slice(2, 10);
+    saveJSON(LS_SYNC_META, state.syncMeta);
+  }
+  return state.syncMeta.deviceId;
+}
+function syncStatusMsg(msg) {
+  if (dom.syncStatus) dom.syncStatus.textContent = "Sync: " + msg;
+}
+function collectSyncPayload() {
+  return {
+    memorized: [...state.memorized],
+    lastVerse: loadJSON(LS_LAST, null),
+    reciterId: state.reciterId,
+    repeat: state.repeat,
+    autoPlay: state.autoPlay,
+    display: state.display,
+    savedAt: Date.now(),
+    device: deviceId()
+  };
+}
+let pushTimer = null;
+function queuePush() {
+  if (!state.syncOn) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => pushSync().catch(() => {}), 1500);
+}
+async function pushSync() {
+  if (!syncReady() || state.syncBusy) return false;
+  if (typeof fetch !== "function" || typeof btoa !== "function") return false;
+  state.syncBusy = true;
+  syncStatusMsg("syncing…");
+  let ok = false;
+  try {
+    for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+      const body = {
+        message: "Ayah sync " + new Date().toISOString(),
+        content: b64encode(JSON.stringify(collectSyncPayload())),
+        branch: "main"
+      };
+      if (syncSha) body.sha = syncSha;
+      const res = await fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${SYNC_FILE}`, {
+        method: "PUT",
+        headers: ghHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(body)
+      });
+      if (res.status === 409 && attempt < 2) {
+        // Your other device wrote first — pull, union-merge locally, retry.
+        const remote = await pullSync(false);
+        if (remote) applyRemote(remote, false);
+        continue;
+      }
+      if (res.status === 401 || res.status === 403) {
+        syncStatusMsg("token problem — tap ⚙ Setup");
+        break;
+      }
+      if (!res.ok) throw new Error("sync " + res.status);
+      const done = await res.json();
+      if (done && done.content && done.content.sha) syncSha = done.content.sha;
+      state.syncMeta.savedAt = Date.now();
+      saveJSON(LS_SYNC_META, state.syncMeta);
+      const t = new Date();
+      const hh = String(t.getHours()).padStart(2, "0");
+      const mm = String(t.getMinutes()).padStart(2, "0");
+      syncStatusMsg(`synced ${hh}:${mm}`);
+      ok = true;
+    }
+  } catch (e) {
+    syncStatusMsg("offline — will retry");
+  } finally {
+    state.syncBusy = false;
+  }
+  return ok;
+}
+async function pullSync(applyPosition) {
+  if (!syncReady() || typeof fetch !== "function") return null;
+  try {
+    const res = await fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${SYNC_FILE}?t=${Date.now()}`, {
+      headers: ghHeaders()
+    });
+    if (res.status === 404) { syncSha = null; return null; } // first ever sync — nothing yet
+    if (res.status === 401 || res.status === 403) {
+      syncStatusMsg("token problem — tap ⚙ Setup");
+      return null;
+    }
+    if (!res.ok) throw new Error("sync " + res.status);
+    const meta = await res.json();
+    syncSha = meta.sha || null;
+    let remote = null;
+    try { remote = JSON.parse(b64decode(meta.content || "")); } catch { remote = null; }
+    if (remote && typeof remote === "object") {
+      applyRemote(remote, applyPosition);
+      const t = new Date();
+      const hh = String(t.getHours()).padStart(2, "0");
+      const mm = String(t.getMinutes()).padStart(2, "0");
+      syncStatusMsg(`synced ${hh}:${mm}`);
+      return remote;
+    }
+    return null;
+  } catch {
+    syncStatusMsg("offline — using this device");
+    return null;
+  }
+}
+function applyRemote(remote, applyPosition) {
+  let touched = false;
+  // Memorized stars: UNION — never lose a star either device made
+  if (Array.isArray(remote.memorized) && remote.memorized.length) {
+    const before = state.memorized.size;
+    for (const k of remote.memorized) {
+      if (typeof k === "string" && indexFromKey(k) >= 0 && indexFromKey(k) < TOTAL_VERSES) {
+        state.memorized.add(k);
+      }
+    }
+    if (state.memorized.size !== before) {
+      saveJSON(LS_MEMORIZED, [...state.memorized]);
+      renderMemorized();
+      touched = true;
+    }
+  }
+  // Settings + position: only trust a remote that is newer than our last push
+  if (remote.savedAt && remote.savedAt > (state.syncMeta.savedAt || 0)) {
+    const rRec = Number(remote.reciterId);
+    if (rRec && RECITERS.some((r) => r.id === rRec) && rRec !== state.reciterId) {
+      state.reciterId = rRec;
+      saveJSON(LS_RECITER, state.reciterId);
+      populateReciterSelect();
+      state.audioCache = {};
+      saveJSON(LS_AUDIOCACHE, state.audioCache);
+      touched = true;
+    }
+    const rRep = Number(remote.repeat);
+    if (rRep >= 1 && rRep !== state.repeat) {
+      state.repeat = rRep;
+      saveJSON(LS_REPEAT, state.repeat);
+      if (dom.repeatSelect) dom.repeatSelect.value = String(state.repeat);
+      touched = true;
+    }
+    if (typeof remote.autoPlay === "boolean" && remote.autoPlay !== state.autoPlay) {
+      state.autoPlay = remote.autoPlay;
+      saveJSON(LS_AUTO, state.autoPlay);
+      if (dom.btnAuto) {
+        dom.btnAuto.classList.toggle("is-on", state.autoPlay);
+        dom.btnAuto.setAttribute("aria-pressed", String(state.autoPlay));
+      }
+      touched = true;
+    }
+    if (Array.isArray(remote.display) && remote.display.length &&
+        JSON.stringify(remote.display) !== JSON.stringify(state.display)) {
+      state.display = remote.display;
+      saveJSON(LS_DISPLAY, state.display);
+      refreshDisplayCheckboxes();
+      touched = true;
+    }
+    if (applyPosition && typeof remote.lastVerse === "string" &&
+        indexFromKey(remote.lastVerse) >= 0 && indexFromKey(remote.lastVerse) < TOTAL_VERSES &&
+        remote.lastVerse !== state.currentKey) {
+      state.currentKey = remote.lastVerse;
+      saveJSON(LS_LAST, remote.lastVerse);
+      touched = true;
+    }
+  }
+  if (touched) renderRead();
+}
+function refreshSyncStatus() {
+  if (!state.syncToken) {
+    syncStatusMsg("setup needed — tap ⚙ Setup");
+  } else if (state.syncMeta.savedAt) {
+    const t = new Date(state.syncMeta.savedAt);
+    const hh = String(t.getHours()).padStart(2, "0");
+    const mm = String(t.getMinutes()).padStart(2, "0");
+    syncStatusMsg(`on — last ${hh}:${mm}`);
+  } else {
+    syncStatusMsg("on — first sync pending");
+  }
+}
+function wireSync() {
+  if (dom.syncSetup) {
+    dom.syncSetup.addEventListener("click", () => {
+      dom.syncPanel.classList.toggle("is-open");
+    });
+  }
+  if (dom.syncSave) {
+    dom.syncSave.addEventListener("click", async () => {
+      const tok = (dom.syncToken.value || "").trim();
+      if (!tok) { syncStatusMsg("paste the token first"); return; }
+      state.syncToken = tok;
+      saveJSON(LS_SYNC_TOKEN, tok);
+      dom.syncToken.value = "";
+      toast("Token saved — syncing…");
+      syncStatusMsg("checking…");
+      const pulled = await pullSync(true); // resume where your other device left off
+      if (!pulled) await pushSync();       // nothing there yet → seed it
+      if (dom.syncPanel) dom.syncPanel.classList.remove("is-open");
+    });
+  }
+  if (dom.syncNow) {
+    dom.syncNow.addEventListener("click", async () => {
+      if (!state.syncToken) {
+        if (dom.syncPanel) dom.syncPanel.classList.add("is-open");
+        syncStatusMsg("paste token first — see Setup");
+        toast("Add your GitHub token first");
+        return;
+      }
+      state.syncOn = true;
+      saveJSON(LS_SYNC_ON, true);
+      toast("Syncing…");
+      await pullSync(false);
+      await pushSync();
+    });
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && syncReady()) {
+      pullSync(false).then((r) => { if (r) queuePush(); });
+    }
+  });
+  setInterval(() => {
+    if (!document.hidden && syncReady()) {
+      pullSync(false).then((r) => { if (r) queuePush(); });
+    }
+  }, 90000);
+  refreshSyncStatus();
+}
+
+/* ================================================================
    Init
    ================================================================ */
 function dailyVerseKey() {
@@ -945,7 +1223,16 @@ function init() {
   setView("read");
   renderMemorized();
   wireEvents();
+  wireSync();
   registerSW();
+
+  // Pull what your other device saved, then push this device's state.
+  // applyPosition=true: reopening the app resumes where you left off there.
+  if (syncReady()) {
+    pullSync(true)
+      .then(() => pushSync())
+      .catch(() => {});
+  }
 }
 
 if (typeof document !== "undefined") {
