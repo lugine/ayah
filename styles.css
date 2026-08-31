@@ -538,11 +538,8 @@ main { display: block; }
   background: var(--bg);
   color: var(--ink);
 }
-.sync-note {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
+.sync-note .repo-name { color: var(--accent); }
+.sync-warn { display: block; color: var(--danger); font-size: 12px; margin: 4px 0 8px; }
 
 .verse-tafsir {
   margin-top: 16px;

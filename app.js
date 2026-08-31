@@ -137,7 +137,7 @@ const LS_AUTO = "ayah.auto.v1";
 const LS_REPEAT = "ayah.repeat.v1";
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
-const APP_VERSION = "v16"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v17"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -1109,7 +1109,10 @@ async function pushSync() {
       }
       if (res.status === 401) { await syncFail(res, "✗ token invalid or revoked"); break; }
       if (res.status === 403) { await syncFail(res, "✗ token can't write (needs Contents Read+write)"); break; }
-      if (res.status === 404) { await syncFail(res, "✗ token can't reach lugine/ayah-sync"); break; }
+      if (res.status === 404) {
+        await syncFail(res, "✗ no access to the sync repo — re-create token & select 'ayah-sync'");
+        break;
+      }
       if (!res.ok) { await syncFail(res, "✗ sync failed"); break; }
       const done = await res.json();
       if (done && done.content && done.content.sha) syncSha = done.content.sha;
@@ -1134,7 +1137,16 @@ async function pullSync(applyPosition) {
     const res = await fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${SYNC_FILE}?t=${Date.now()}`, {
       headers: ghHeaders()
     });
-    if (res.status === 404) { syncSha = null; return null; } // no cloud record yet — we'll create it
+    if (res.status === 404) {
+      // GitHub returns 404 both when the file doesn't exist yet AND when the
+      // token can't see the private repo. Probe the repo endpoint to tell apart.
+      try {
+        const rp = await fetch(`${GH_API}/repos/${SYNC_REPO}`, { headers: ghHeaders() });
+        if (rp.ok) { syncSha = null; return null; } // repo visible → file not created yet; we'll create it
+      } catch { /* fall through to the warning below */ }
+      await syncFail(res, "✗ token can't access the sync repo — re-create token & select 'ayah-sync'");
+      return null;
+    }
     if (res.status === 401) { await syncFail(res, "✗ token invalid or revoked"); return null; }
     if (res.status === 403) { await syncFail(res, "✗ token can't read (needs Contents access)"); return null; }
     if (!res.ok) { await syncFail(res, "✗ pull failed"); return null; }
@@ -1176,7 +1188,7 @@ async function syncTest() {
     }
     // 2. Can it see the sync repo at all?
     r = await fetch(`${GH_API}/repos/${SYNC_REPO}`, { headers: ghHeaders() });
-    parts.push(r.ok ? "✓ can see lugine/ayah-sync" : `✗ ${r.status} — repo not visible to token`);
+    parts.push(r.ok ? "✓ can see lugine/ayah-sync" : `✗ ${r.status} — repo not visible → re-create token & select 'ayah-sync' (not 'ayah')`);
 
     // 3. Can it read the sync file?
     r = await fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${SYNC_FILE}?t=${Date.now()}`, { headers: ghHeaders() });
