@@ -137,7 +137,7 @@ const LS_AUTO = "ayah.auto.v1";
 const LS_REPEAT = "ayah.repeat.v1";
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
-const APP_VERSION = "v17"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v18"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -1327,7 +1327,11 @@ function wireSync() {
       dom.syncToken.value = "";
       toast("Token saved — syncing…");
       syncStatusMsg("checking…");
-      await pullSync(true); // resume where your other device left off
+      // If this device has a real spot it has read before, keep it — don't let
+      // another device's position teleport it. A brand-new device (no saved
+      // spot) still adopts the remote position so it starts where you left off.
+      const hasLocalSpot = !!(loadJSON(LS_LAST, null));
+      await pullSync(!hasLocalSpot);
       await pushSync();     // then write this device's state (always)
       if (dom.syncPanel) dom.syncPanel.classList.remove("is-open");
     });
