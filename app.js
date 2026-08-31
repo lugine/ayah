@@ -135,6 +135,7 @@ const LS_RECITER = "ayah.reciter.v1";
 const LS_AUDIOCACHE = "ayah.audioCache.v2"; // v2: invalidates broken mirror URLs cached by older versions
 const LS_AUTO = "ayah.auto.v1";
 const LS_REPEAT = "ayah.repeat.v1";
+const LS_SPEED = "ayah.speed.v1";
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -224,6 +225,7 @@ const state = {
   autoPlay: loadJSON(LS_AUTO, false),
   repeat: Number(loadJSON(LS_REPEAT, 1)),
   repeatCount: 0,
+  speed: Number(loadJSON(LS_SPEED, 1)),
   display: loadJSON(LS_DISPLAY, ["en"]),
   tafsirCache: loadJSON(LS_TAFSIRCACHE, {}),
   syncOn: loadJSON(LS_SYNC_ON, true),
@@ -267,6 +269,7 @@ const dom = {
   audioEl: $("#audioEl"),
   btnAuto: $("#btnAuto"),
   repeatSelect: $("#repeatSelect"),
+  speedSelect: $("#speedSelect"),
   dispEn: $("#dispEn"),
   dispAr: $("#dispAr"),
   dispTafsir: $("#dispTafsir"),
@@ -556,12 +559,14 @@ async function refreshAudio(key) {
     if (wasPlaying) {
       // Navigating to a new verse while audio plays: keep the flow going
       dom.audioEl.src = url;
+      dom.audioEl.playbackRate = state.speed;
       dom.audioEl.play().catch(() => {});
       dom.playIcon.style.display = "none";
       dom.pauseIcon.style.display = "";
     } else if (state.autoPlay) {
       // Auto-play on arrival (the user asked for #1)
       dom.audioEl.src = url;
+      dom.audioEl.playbackRate = state.speed;
       dom.audioEl.play().catch(() => {
         dom.playIcon.style.display = "";
         dom.pauseIcon.style.display = "none";
@@ -577,12 +582,16 @@ async function refreshAudio(key) {
   }
 }
 
+function applySpeed() {
+  if (dom.audioEl) dom.audioEl.playbackRate = state.speed;
+}
 function togglePlay() {
   const el = dom.audioEl;
   const url = dom.btnPlay.dataset.url;
   if (!url) { toast("Audio unavailable offline"); return; }
   if (!el.src || el.paused) {
     if (el.src !== url) el.src = url;
+    el.playbackRate = state.speed;
     state.repeatCount = 0;
     el.play().then(() => {
       dom.playIcon.style.display = "none";
@@ -874,6 +883,13 @@ function wireEvents() {
     queuePush();
     toast(`Repeat: ${state.repeat}×`);
   });
+  dom.speedSelect.addEventListener("change", () => {
+    state.speed = Number(dom.speedSelect.value);
+    saveJSON(LS_SPEED, state.speed);
+    applySpeed();
+    queuePush();
+    toast(`Playback speed: ${state.speed}×`);
+  });
   dom.dispEn.addEventListener("change", () => toggleDisplay("en"));
   dom.dispAr.addEventListener("change", () => toggleDisplay("ar"));
   dom.dispTafsir.addEventListener("change", () => toggleDisplay("tafsir"));
@@ -980,6 +996,7 @@ function collectSyncPayload() {
     lastVerse: loadJSON(LS_LAST, null),
     reciterId: state.reciterId,
     repeat: state.repeat,
+    speed: state.speed,
     autoPlay: state.autoPlay,
     display: state.display,
     savedAt: Date.now(),
@@ -1103,6 +1120,14 @@ function applyRemote(remote, applyPosition) {
       if (dom.repeatSelect) dom.repeatSelect.value = String(state.repeat);
       touched = true;
     }
+    const rSpeed = Number(remote.speed);
+    if (rSpeed >= 0.25 && rSpeed <= 3 && rSpeed !== state.speed) {
+      state.speed = rSpeed;
+      saveJSON(LS_SPEED, state.speed);
+      if (dom.speedSelect) dom.speedSelect.value = String(state.speed);
+      applySpeed();
+      touched = true;
+    }
     if (typeof remote.autoPlay === "boolean" && remote.autoPlay !== state.autoPlay) {
       state.autoPlay = remote.autoPlay;
       saveJSON(LS_AUTO, state.autoPlay);
@@ -1213,6 +1238,8 @@ function init() {
   dom.btnAuto.classList.toggle("is-on", state.autoPlay);
   dom.btnAuto.setAttribute("aria-pressed", String(state.autoPlay));
   dom.repeatSelect.value = String(state.repeat);
+  dom.speedSelect.value = String(state.speed);
+  applySpeed();
   refreshDisplayCheckboxes();
 
   const initChap = parseKey(state.currentKey).chapter;

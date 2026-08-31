@@ -29,8 +29,8 @@ no subscriptions, no v0 credits.
 - **Display options** — a dropdown chooses what's shown under the Arabic:
   translation only, Arabic only, **Tafsir (Ibn Kathir)**, or both translation + tafsir
 - **Audio** — play recitation of the current ayah (like Quran.com) with 12
-  reciters to choose from (Alafasy, Sudais, Al-Husary, al-Minshawi, and more);
-  your choice is remembered
+  reciters to choose from (Alafasy, Sudais, Al-Husary, al-Minshawi, and more)
+  and **playback speed** (0.5×–2×); your choices are remembered
 - **Browse** — all 114 surahs, expandable to per-ayah chips
 - **Memorized** — mark verses (saved on-device), live count
 - **Offline** — service worker caches the shell + viewed verses and audio links;
