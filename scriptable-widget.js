@@ -11,7 +11,8 @@
 const API = "https://api.quran.com/api/v4";
 const APP_URL = "https://lugine.github.io/ayah/";
 const TRANSLATION_ID = 131; // Saheeh International — same as the app
-const TWIN_VERSION = "read-card-twin-v2";
+const TWIN_VERSION = "read-card-twin-v3";
+console.log("[Ayah widget] script starting, v" + TWIN_VERSION);
 
 // 114 surah ayah counts + English names (mirrors app.js SURAHS exactly)
 const COUNTS = [7,286,200,176,120,165,206,75,129,109,123,111,43,52,99,128,111,110,98,135,112,78,118,64,77,227,93,88,69,60,34,30,73,54,45,83,182,88,75,85,54,53,89,59,37,35,38,29,18,45,60,49,62,55,78,96,29,22,24,13,14,11,11,18,12,12,30,52,52,44,28,28,20,56,40,31,50,40,46,42,29,19,36,25,22,17,19,26,30,20,15,21,11,8,8,19,5,8,8,11,11,8,3,9,5,4,7,3,6,3,5,4,5,6];
@@ -23,11 +24,19 @@ const PAL = {
   cardD: "#16241e", inkD: "#e9efe9", mutedD: "#93a29a", accentD: "#54c98f", softD: "#1c3a2c",
 };
 function dyn(light, dark) { return Color.dynamic(new Color(light), new Color(dark)); }
-const CARD = dyn(PAL.cardL, PAL.cardD);
-const INK = dyn(PAL.inkL, PAL.inkD);
-const MUTED = dyn(PAL.mutedL, PAL.mutedD);
-const ACCENT = dyn(PAL.accentL, PAL.accentD);
-const SOFT = dyn(PAL.softL, PAL.softD);
+// Top-level code must never crash (a crash here = no preview at all in Scriptable)
+let CARD, INK, MUTED, ACCENT, SOFT;
+try {
+  CARD = dyn(PAL.cardL, PAL.cardD);
+  INK = dyn(PAL.inkL, PAL.inkD);
+  MUTED = dyn(PAL.mutedL, PAL.mutedD);
+  ACCENT = dyn(PAL.accentL, PAL.accentD);
+  SOFT = dyn(PAL.softL, PAL.softD);
+} catch (palErr) {
+  console.log("[Ayah widget] dynamic colors unavailable, using plain: " + palErr);
+  CARD = new Color(PAL.cardL); INK = new Color(PAL.inkL); MUTED = new Color(PAL.mutedL);
+  ACCENT = new Color(PAL.accentL); SOFT = new Color(PAL.softL);
+}
 
 /* ---------- verse selection (mirrors app.js dailyVerseKey) ---------- */
 function buildOffsets() {
@@ -86,13 +95,24 @@ function saveCache(data) {
   try { FM.writeString(CACHE_PATH, JSON.stringify(data)); } catch (e) {}
 }
 
+/* ---------- hard timeout so a hung request can never block the preview ---------- */
+function withTimeout(promise, ms, label) {
+  if (typeof setTimeout !== "function") return promise;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(label + " timed out after " + Math.round(ms / 1000) + "s")), ms);
+    }),
+  ]);
+}
+
 async function fetchVerse(key) {
   const req = new Request(
     API + "/verses/by_key/" + encodeURIComponent(key) +
     "?translations=" + TRANSLATION_ID + "&fields=text_imlaei"
   );
   req.timeoutInterval = 12;
-  const json = await req.loadJSON();
+  const json = await withTimeout(req.loadJSON(), 15000, "Quran.com request");
   const v = (json && json.verse) || (json && json.verses && json.verses[0]);
   if (!v) throw new Error("unexpected API shape");
   const ar = v.text_imlaei || v.text_uthmani || "";
@@ -215,9 +235,33 @@ function showErrorWidget(message) {
     hint.font = Font.mediumSystemFont(9);
     hint.textColor = new Color("#ffbaba");
     w.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000);
-    Script.setWidget(w);
+    present(w);
   } catch (e) { console.error("Ayah widget fatal: " + e); }
 }
+
+/* ---------- guaranteed presentation: every path ends with something on screen ---------- */
+let presented = false;
+function present(w) {
+  presented = true;
+  console.log("[Ayah widget] presenting widget");
+  Script.setWidget(w);
+}
+try {
+  // In-app only: if nothing presented within 25s (e.g. a hung request), show diagnostics
+  if (typeof Timer !== "undefined" && typeof config !== "undefined" && config && !config.runsInWidget) {
+    Timer.schedule(25 * 1000, false, function () {
+      if (presented) return;
+      try {
+        const w = new ListWidget();
+        w.backgroundColor = new Color("#3a1414");
+        const t = w.addText("⚠️ Ayah widget stalled — no answer in 25s. Screenshot & tell Cline.");
+        t.font = Font.boldSystemFont(11);
+        t.textColor = new Color("#ffecec");
+        present(w);
+      } catch (wdErr) {}
+    });
+  }
+} catch (wdSetupErr) {}
 
 /* ---------- runner ---------- */
 let lastErrMessage = "";
@@ -250,5 +294,5 @@ let lastErrMessage = "";
   }
   const w = buildWidget(data, key, family);
   w.refreshAfterDate = nextUTCMidnight();
-  Script.setWidget(w);
+  present(w);
 })().catch((e) => showErrorWidget(e && e.message ? e.message : String(e)));
