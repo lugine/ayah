@@ -136,6 +136,7 @@ const LS_AUDIOCACHE = "ayah.audioCache.v2"; // v2: invalidates broken mirror URL
 const LS_AUTO = "ayah.auto.v1";
 const LS_REPEAT = "ayah.repeat.v1";
 const LS_SPEED = "ayah.speed.v1";
+const LS_VERSION = "ayah.version.v1";
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -259,6 +260,7 @@ const dom = {
   btnQuranCom: $("#btnQuranCom"),
   installBtn: $("#installBtn"),
   toast: $("#toast"),
+  refreshBtn: $("#refreshBtn"),
   readSurahSelect: $("#readSurahSelect"),
   readAyahSelect: $("#readAyahSelect"),
   reciterSelect: $("#reciterSelect"),
@@ -876,6 +878,7 @@ function wireEvents() {
     dom.btnAuto.setAttribute("aria-pressed", String(state.autoPlay));
     toast(state.autoPlay ? "Auto-play ON — advance to next ayah after audio" : "Auto-play OFF");
   });
+  dom.refreshBtn.addEventListener("click", () => checkForUpdates(true));
   dom.repeatSelect.addEventListener("change", () => {
     state.repeat = Number(dom.repeatSelect.value);
     state.repeatCount = 0;
@@ -954,6 +957,55 @@ function registerSW() {
       /* ignore — still works without offline */
     });
   });
+}
+
+/* ---------- Update / refresh ---------- */
+async function fetchRemoteVersion() {
+  try {
+    const res = await fetch("./sw.js?t=" + Date.now(), { cache: "no-store" });
+    if (!res.ok) return null;
+    const text = await res.text();
+    const m = text.match(/VERSION\s*=\s*"([^"]+)"/);
+    return m ? m[1] : null;
+  } catch {
+    return null; // offline or blocked
+  }
+}
+
+async function refreshSW() {
+  try {
+    if (!("serviceWorker" in navigator)) return;
+    await navigator.serviceWorker.ready;
+    await navigator.serviceWorker.getRegistration().then((reg) => reg && reg.update());
+  } catch { /* ignore */ }
+}
+
+async function checkForUpdates(manual) {
+  const remote = await fetchRemoteVersion();
+  const local = loadJSON(LS_VERSION, "");
+  if (remote) saveJSON(LS_VERSION, remote);
+
+  if (!manual) {
+    // Quiet auto-check on launch: keep the service worker pointed at the latest.
+    if (remote && remote !== local) refreshSW();
+    return;
+  }
+
+  const btn = dom.refreshBtn;
+  btn.disabled = true;
+  btn.classList.add("is-spinning");
+  try {
+    if (!remote) {
+      toast("Offline — can't check for updates");
+      return;
+    }
+    await refreshSW();
+    toast(remote !== local ? "New version " + remote + " — refreshing…" : "Up to date — refreshing…");
+    setTimeout(() => location.reload(), 650);
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove("is-spinning");
+  }
 }
 
 /* ================================================================
@@ -1252,6 +1304,7 @@ function init() {
   wireEvents();
   wireSync();
   registerSW();
+  checkForUpdates(false); // quiet: keep the SW on the latest build
 
   // Pull what your other device saved, then push this device's state.
   // applyPosition=true: reopening the app resumes where you left off there.

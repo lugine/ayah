@@ -83,6 +83,26 @@ body {
 }
 .install-btn:hover { background: var(--accent-soft); }
 
+.icon-btn {
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: transparent;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: background .15s, color .15s, border-color .15s, opacity .15s;
+}
+.icon-btn:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.icon-btn:disabled { opacity: .5; cursor: default; }
+.icon-btn.is-spinning svg { animation: ayah-spin .8s linear infinite; }
+@keyframes ayah-spin { to { transform: rotate(360deg); } }
+.install-wrap { display: flex; align-items: center; gap: 8px; }
+
 /* ===== Tabs ===== */
 .tabs {
   display: flex;

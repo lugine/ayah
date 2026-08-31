@@ -36,6 +36,8 @@ no subscriptions, no v0 credits.
 - **Offline** — service worker caches the shell + viewed verses and audio links;
   curated verses work with no internet; tafsir caches recently viewed verses
 - **Installable PWA** + light/dark themes
+- **Refresh button** (↻ in the top bar) — tap anytime to check for a new build,
+  update the service worker, and reload to the latest version instantly
 
 ## Run locally
 ```bash
