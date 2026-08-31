@@ -407,6 +407,8 @@ main { display: block; }
   color: var(--muted);
   padding: 4px 0 10px;
 }
+.foot .ver { display: block; margin-top: 5px; opacity: 0.8; font-size: 10.5px; }
+
 .toast {
   position: fixed;
   left: 50%;

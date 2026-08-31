@@ -137,6 +137,7 @@ const LS_AUTO = "ayah.auto.v1";
 const LS_REPEAT = "ayah.repeat.v1";
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
+const APP_VERSION = "v16"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -282,7 +283,8 @@ const dom = {
   syncToken: $("#syncToken"),
   syncSave: $("#syncSave"),
   syncTest: $("#syncTest"),
-  syncStatus: $("#syncStatus")
+  syncStatus: $("#syncStatus"),
+  appVersion: $("#appVersion")
 };
 
 /* ---------- Toast helper ---------- */
@@ -1120,7 +1122,7 @@ async function pushSync() {
       ok = true;
     }
   } catch (e) {
-    syncStatusMsg("network error — will retry");
+    syncStatusMsg("network error (" + (e && e.message ? e.message : "fetch failed") + ") — will retry");
   } finally {
     state.syncBusy = false;
   }
@@ -1150,7 +1152,7 @@ async function pullSync(applyPosition) {
     }
     return null;
   } catch (e) {
-    syncStatusMsg("network error — will retry");
+    syncStatusMsg("network error (" + (e && e.message ? e.message : "fetch failed") + ") — will retry");
     return null;
   }
 }
@@ -1213,7 +1215,7 @@ async function syncTest() {
       parts.push(`✗ ${r.status} — write blocked (${await ghErr(r)})`);
     }
   } catch (e) {
-    parts.push("network error during test");
+    parts.push("network error during test (" + (e && e.message ? e.message : "fetch failed") + ")");
   }
   syncStatusMsg(parts.join(" · "));
   console.warn("[Ayah sync test]", parts.join(" · "));
@@ -1313,8 +1315,8 @@ function wireSync() {
       dom.syncToken.value = "";
       toast("Token saved — syncing…");
       syncStatusMsg("checking…");
-      const pulled = await pullSync(true); // resume where your other device left off
-      if (!pulled) await pushSync();       // nothing there yet → seed it
+      await pullSync(true); // resume where your other device left off
+      await pushSync();     // then write this device's state (always)
       if (dom.syncPanel) dom.syncPanel.classList.remove("is-open");
     });
   }
@@ -1360,6 +1362,7 @@ function dailyVerseKey() {
 }
 
 function init() {
+  if (dom.appVersion) dom.appVersion.textContent = APP_VERSION;
   // Restore last-viewed verse, or show today's daily verse on first run
   const last = loadJSON(LS_LAST, null);
   state.currentKey = last && indexFromKey(last) >= 0 && indexFromKey(last) < TOTAL_VERSES
