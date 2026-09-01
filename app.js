@@ -137,7 +137,8 @@ const LS_AUTO = "ayah.auto.v1";
 const LS_REPEAT = "ayah.repeat.v1";
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
-const APP_VERSION = "v18"; // keep in sync with sw.js VERSION
+const LS_NAV_AT = "ayah.lastNavAt.v1";
+const APP_VERSION = "v20"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -233,6 +234,7 @@ const state = {
   syncOn: loadJSON(LS_SYNC_ON, true),
   syncMeta: loadJSON(LS_SYNC_META, { savedAt: 0, deviceId: null }),
   syncToken: loadJSON(LS_SYNC_TOKEN, ""),
+  lastNavAt: Number(loadJSON(LS_NAV_AT, 0)),
   syncBusy: false
 };
 
@@ -289,6 +291,7 @@ const dom = {
 
 /* ---------- Toast helper ---------- */
 let toastTimer = null;
+let navPending = false; // true only when a REAL user action changed the verse
 function toast(msg) {
   dom.toast && (dom.toast.textContent = msg);
   dom.toast.classList.add("show");
@@ -485,8 +488,16 @@ async function renderRead() {
   } finally {
     if (token === readToken) dom.readCard.classList.remove("is-loading");
   }
-  saveJSON(LS_LAST, key);
-  queuePush(); // last-read position follows you across devices
+  // Only a REAL user navigation counts as "last read". The daily verse and
+  // restored positions are never pushed, so an idle/fresh device can never
+  // clobber the position of the device you're actually reading on.
+  if (navPending) {
+    navPending = false;
+    saveJSON(LS_LAST, key);
+    state.lastNavAt = Date.now();
+    saveJSON(LS_NAV_AT, state.lastNavAt);
+    queuePush(); // last-read position follows you across devices
+  }
   if (state.view === "read") updateMemButton();
   refreshAudio(key); // fire-and-forget; doesn't block the verse display
 }
@@ -611,16 +622,19 @@ function togglePlay() {
 }
 
 function goPrev() {
+  navPending = true;
   const { index } = keyFromIndex(indexFromKey(state.currentKey));
   state.currentKey = keyFromIndex(index - 1).key;
   renderRead();
 }
 function goNext() {
+  navPending = true;
   const { index } = keyFromIndex(indexFromKey(state.currentKey));
   state.currentKey = keyFromIndex(index + 1).key;
   renderRead();
 }
 function goShuffle() {
+  navPending = true;
   state.currentKey = keyFromIndex(Math.floor(Math.random() * TOTAL_VERSES)).key;
   renderRead();
 }
@@ -721,6 +735,7 @@ async function toggleChapter(surah, li) {
       chip.title = `Go to ${surah.name} ${key.split(":")[1]}`;
       chip.addEventListener("click", (e) => {
         e.stopPropagation();
+        navPending = true;
         state.currentKey = key;
         setView("read");
       });
@@ -855,10 +870,12 @@ function wireEvents() {
   dom.readSurahSelect.addEventListener("change", () => {
     const chap = Number(dom.readSurahSelect.value);
     populateAyahSelect(chap);
+    navPending = true;
     state.currentKey = `${chap}:1`;
     renderRead();
   });
   dom.readAyahSelect.addEventListener("change", () => {
+    navPending = true;
     state.currentKey = `${dom.readSurahSelect.value}:${dom.readAyahSelect.value}`;
     renderRead();
   });
@@ -1023,6 +1040,7 @@ const GH_API = "https://api.github.com";
 const SYNC_REPO = "lugine/ayah-sync";
 const SYNC_FILE = "sync.json";
 let syncSha = null; // last-known blob sha — compare-and-swap for writes
+let lastRemoteMemorized = new Set(); // last set seen in the cloud — pushes never shrink stars
 // LS_SYNC_META / LS_SYNC_ON / LS_SYNC_TOKEN live in the top constants block.
 
 function syncReady() { return !!(state.syncOn && state.syncToken); }
@@ -1062,9 +1080,12 @@ function syncStatusMsg(msg) {
   if (dom.syncStatus) dom.syncStatus.textContent = "Sync: " + msg;
 }
 function collectSyncPayload() {
+  // Union local stars with the last set we saw in the cloud so a push from one
+  // device can never erase a star another device added.
+  const merged = new Set([...state.memorized, ...lastRemoteMemorized]);
   return {
-    memorized: [...state.memorized],
-    lastVerse: loadJSON(LS_LAST, null),
+    memorized: [...merged],
+    lastVerse: loadJSON(LS_LAST, null) || undefined, // omit when no real spot
     reciterId: state.reciterId,
     repeat: state.repeat,
     speed: state.speed,
@@ -1234,6 +1255,7 @@ async function syncTest() {
 }
 function applyRemote(remote, applyPosition) {
   let touched = false;
+  if (Array.isArray(remote.memorized)) lastRemoteMemorized = new Set(remote.memorized.filter((k) => typeof k === "string"));
   // Memorized stars: UNION — never lose a star either device made
   if (Array.isArray(remote.memorized) && remote.memorized.length) {
     const before = state.memorized.size;
@@ -1291,9 +1313,15 @@ function applyRemote(remote, applyPosition) {
       touched = true;
     }
     if (applyPosition && typeof remote.lastVerse === "string" &&
+        remote.savedAt > state.lastNavAt &&
         indexFromKey(remote.lastVerse) >= 0 && indexFromKey(remote.lastVerse) < TOTAL_VERSES &&
         remote.lastVerse !== state.currentKey) {
+      // The cloud's "last read" is newer than any real navigation on this
+      // device — follow it. Adopting also updates lastNavAt so an echo of the
+      // same position isn't treated as new again.
       state.currentKey = remote.lastVerse;
+      state.lastNavAt = Math.max(state.lastNavAt, remote.savedAt);
+      saveJSON(LS_NAV_AT, state.lastNavAt);
       saveJSON(LS_LAST, remote.lastVerse);
       touched = true;
     }
@@ -1350,21 +1378,28 @@ function wireSync() {
       state.syncOn = true;
       saveJSON(LS_SYNC_ON, true);
       toast("Syncing…");
-      await pullSync(false);
+      await pullSync(true); // explicit "sync now" → converge on newest position
       await pushSync();
     });
   }
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && syncReady()) {
-      pullSync(false).then((r) => { if (r) queuePush(); });
-    }
+    if (!document.hidden) syncCycle();
   });
   setInterval(() => {
-    if (!document.hidden && syncReady()) {
-      pullSync(false).then((r) => { if (r) queuePush(); });
-    }
+    if (!document.hidden) syncCycle();
   }, 90000);
   refreshSyncStatus();
+}
+
+/* Background cycle: pull the cloud — adopting a newer position (so devices
+   converge on "last read wins") and unioning memorized — then only re-push if
+   the remote was actually newer (otherwise we'd clobber it with stale data). */
+function syncCycle() {
+  if (!syncReady()) return;
+  const prevSaved = state.syncMeta.savedAt || 0;
+  pullSync(true).then((remote) => {
+    if (remote && remote.savedAt && remote.savedAt > prevSaved) queuePush();
+  }).catch(() => {});
 }
 
 /* ================================================================
@@ -1381,9 +1416,24 @@ function init() {
   if (dom.appVersion) dom.appVersion.textContent = APP_VERSION;
   // Restore last-viewed verse, or show today's daily verse on first run
   const last = loadJSON(LS_LAST, null);
-  state.currentKey = last && indexFromKey(last) >= 0 && indexFromKey(last) < TOTAL_VERSES
-    ? last
-    : dailyVerseKey();
+  const daily = dailyVerseKey();
+  // A saved spot that is exactly today's auto-daily verse is almost certainly
+  // the seed (not a real read) — drop it so this device behaves as fresh and
+  // follows wherever you actually last read (on any device).
+  if (last === daily) {
+    saveJSON(LS_LAST, null);
+    state.currentKey = daily;
+  } else if (last && indexFromKey(last) >= 0 && indexFromKey(last) < TOTAL_VERSES) {
+    state.currentKey = last;
+    // Existing real spot, no recorded nav-time yet → small sentinel so a stale
+    // cloud position can't yank this device away before it has pushed its own.
+    if (state.lastNavAt <= 0) {
+      state.lastNavAt = 1;
+      saveJSON(LS_NAV_AT, 1);
+    }
+  } else {
+    state.currentKey = daily;
+  }
 
   populateSurahSelect();
   populateReciterSelect();
@@ -1408,11 +1458,13 @@ function init() {
   registerSW();
   checkForUpdates(false); // quiet: keep the SW on the latest build
 
-  // Pull what your other device saved, then push this device's state.
-  // applyPosition=true: reopening the app resumes where you left off there.
+  // PUSH this device's state FIRST (so a device with a real reading spot —
+  // e.g. your Mac's Al-Baqarah — claims it in the cloud), then PULL to adopt
+  // anything newer. A fresh device pushes nothing for position, so it just
+  // adopts wherever you actually last read on any device.
   if (syncReady()) {
-    pullSync(true)
-      .then(() => pushSync())
+    pushSync()
+      .then(() => pullSync(true))
       .catch(() => {});
   }
 }
