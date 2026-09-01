@@ -138,7 +138,7 @@ const LS_REPEAT = "ayah.repeat.v1";
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v21"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v22"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -1353,11 +1353,13 @@ function applyRemote(remote, applyPosition) {
     }
     if (applyPosition && typeof remote.lastVerse === "string" &&
         remote.savedAt > state.lastNavAt &&
+        !isDailySeed(remote.lastVerse) &&
         indexFromKey(remote.lastVerse) >= 0 && indexFromKey(remote.lastVerse) < TOTAL_VERSES &&
         remote.lastVerse !== state.currentKey) {
-      // The cloud's "last read" is newer than any real navigation on this
-      // device — follow it. Adopting also updates lastNavAt so an echo of the
-      // same position isn't treated as new again.
+      // The cloud's "last read" is a REAL read (not an idle daily seed) and is
+      // newer than any real navigation on this device — follow it. Adopting
+      // also updates lastNavAt so an echo of the same position isn't treated
+      // as new again.
       state.currentKey = remote.lastVerse;
       state.lastNavAt = Math.max(state.lastNavAt, remote.savedAt);
       saveJSON(LS_NAV_AT, state.lastNavAt);
@@ -1417,8 +1419,12 @@ function wireSync() {
       state.syncOn = true;
       saveJSON(LS_SYNC_ON, true);
       toast("Syncing…");
-      await pullSync(true); // explicit "sync now" → converge on newest position
+      // Push this device's real state first (claims the cloud, and a stale
+      // daily seed in the cloud can't hijack you), then pull to adopt a
+      // genuinely newer real read from the other device.
       await pushSync();
+      await pullSync(true);
+      refreshSyncStatus();
     });
   }
   document.addEventListener("visibilitychange", () => {
@@ -1462,11 +1468,18 @@ function syncCycle() {
 /* ================================================================
    Init
    ================================================================ */
-function dailyVerseKey() {
+function dailyVerseKey(offsetDays = 0) {
   const now = new Date();
-  const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  d.setUTCDate(d.getUTCDate() + offsetDays);
+  const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
   const dayIndex = Math.floor(start / 86400000);
   return keyFromIndex(dayIndex % TOTAL_VERSES).key;
+}
+// A verse that is today's (or yesterday's) auto-daily seed is not a real user
+// read — never adopt or push one, so idle daily seeds can never win.
+function isDailySeed(key) {
+  return !!key && (key === dailyVerseKey(0) || key === dailyVerseKey(-1));
 }
 
 function init() {
@@ -1474,20 +1487,14 @@ function init() {
   // Restore last-viewed verse, or show today's daily verse on first run
   const last = loadJSON(LS_LAST, null);
   const daily = dailyVerseKey();
-  // A saved spot that is exactly today's auto-daily verse is almost certainly
-  // the seed (not a real read) — drop it so this device behaves as fresh and
-  // follows wherever you actually last read (on any device).
-  if (last === daily) {
+  // A saved spot that is today's OR yesterday's auto-daily verse is almost
+  // certainly an idle seed (not a real read) — drop it so this device behaves
+  // as fresh and follows wherever you actually last read on any device.
+  if (isDailySeed(last)) {
     saveJSON(LS_LAST, null);
     state.currentKey = daily;
   } else if (last && indexFromKey(last) >= 0 && indexFromKey(last) < TOTAL_VERSES) {
     state.currentKey = last;
-    // Existing real spot, no recorded nav-time yet → small sentinel so a stale
-    // cloud position can't yank this device away before it has pushed its own.
-    if (state.lastNavAt <= 0) {
-      state.lastNavAt = 1;
-      saveJSON(LS_NAV_AT, 1);
-    }
   } else {
     state.currentKey = daily;
   }
@@ -1515,14 +1522,20 @@ function init() {
   registerSW();
   checkForUpdates(false); // quiet: keep the SW on the latest build
 
-  // PUSH this device's state FIRST (so a device with a real reading spot —
-  // e.g. your Mac's Al-Baqarah — claims it in the cloud), then PULL to adopt
-  // anything newer. A fresh device pushes nothing for position, so it just
-  // adopts wherever you actually last read on any device.
+  // Sync flow depends on whether this device has a real reading spot:
+//  - Real spot (e.g. your Mac at Al-Baqarah): PUSH first so this device claims
+//    the cloud, then pull WITHOUT adopting (a stale daily-seed verse on the
+//    cloud must never teleport away your own spot).
+//  - Fresh / daily-seeded device (no real spot): PULL first to adopt wherever
+//    you actually last read, then push (a fresh device pushes no position, so
+//    it can't clobber the cloud).
   if (syncReady()) {
-    pushSync()
-      .then(() => pullSync(true))
-      .catch(() => {});
+    const hasRealSpot = !!(loadJSON(LS_LAST, null) && !isDailySeed(loadJSON(LS_LAST, null)));
+    if (hasRealSpot) {
+      pushSync().then(() => pullSync(false)).catch(() => {});
+    } else {
+      pullSync(true).then(() => pushSync()).catch(() => {});
+    }
   }
 }
 
