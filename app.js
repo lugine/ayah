@@ -138,7 +138,7 @@ const LS_REPEAT = "ayah.repeat.v1";
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v20"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v21"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -286,7 +286,8 @@ const dom = {
   syncSave: $("#syncSave"),
   syncTest: $("#syncTest"),
   syncStatus: $("#syncStatus"),
-  appVersion: $("#appVersion")
+  appVersion: $("#appVersion"),
+  diagLog: $("#diagLog")
 };
 
 /* ---------- Toast helper ---------- */
@@ -1093,7 +1094,41 @@ function collectSyncPayload() {
     display: state.display,
     savedAt: Date.now(),
     device: deviceId()
+     };
+}
+/* ---- Diagnostics: triple-tap the footer to dump local/cloud/will-push ---- */
+async function debugDump() {
+  if (!dom.diagLog) { toast("diag: element missing"); return; }
+  let remote = null;
+  try {
+    const res = await fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${SYNC_FILE}?t=${Date.now()}`, { headers: ghHeaders() });
+    if (res.ok) {
+      const j = await res.json();
+      remote = JSON.parse(b64decode(j.content || ""));
+    } else {
+      remote = { http: res.status, note: await res.text().slice(0, 200) };
+    }
+  } catch (e) {
+    remote = { error: String(e && e.message ? e.message : e) };
+  }
+  const local = {
+    thisDevice: deviceId(),
+    syncTokenPresent: !!state.syncToken,
+    syncReady: syncReady(),
+    localLastVerse: loadJSON(LS_LAST, null),
+    localLastNavAt: state.lastNavAt,
+    localMemorized: [...state.memorized],
+    cachedCloudMemorized: [...lastRemoteMemorized]
   };
+  const willPush = collectSyncPayload();
+  const report =
+    "LOCAL:\n" + JSON.stringify(local, null, 2) + "\n" +
+    "\nCLOUD (current sync.json):\n" + JSON.stringify(remote, null, 2) + "\n" +
+    "\nWILL-PUSH (next payload):\n" + JSON.stringify(willPush, null, 2);
+  dom.diagLog.textContent = report;
+  dom.diagLog.hidden = false;
+  console.log("[ayah diagnostics]", report);
+  toast("diagnostics shown ↓");
 }
 let pushTimer = null;
 function queuePush() {
@@ -1392,7 +1427,25 @@ function wireSync() {
   setInterval(() => {
     if (!document.hidden) syncCycle();
   }, 90000);
-  refreshSyncStatus();
+    refreshSyncStatus();
+
+  // Triple-tap the footer (version span) to reveal a diagnostics dump:
+  // local state, current cloud sync.json, and the exact payload this device
+  // is about to push. Non-intrusive — single/double taps still do nothing.
+  let footClicks = 0;
+  let footTimer = null;
+  const foot = dom.appVersion || $("#appVersion") || document.querySelector(".foot");
+  if (foot) {
+    foot.addEventListener("click", (e) => {
+      e.stopPropagation();
+      footClicks++;
+      clearTimeout(footTimer);
+      footTimer = setTimeout(() => {
+        if (footClicks >= 3) { footClicks = 0; debugDump(); }
+        else { footClicks = 0; }
+      }, 300);
+    });
+  }
 }
 
 /* Background cycle: pull the cloud — adopting a newer position (so devices
