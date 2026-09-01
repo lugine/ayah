@@ -1109,9 +1109,13 @@ async function pushSync() {
   let ok = false;
   try {
     for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+      const payload = collectSyncPayload();
+      // Visible proof of what this device is writing to the cloud.
+      console.log("[ayah sync] pushing", JSON.stringify(payload));
+      if (attempt === 0) syncStatusMsg("pushed " + (payload.lastVerse || "no position"));
       const body = {
         message: "Ayah sync " + new Date().toISOString(),
-        content: b64encode(JSON.stringify(collectSyncPayload())),
+        content: b64encode(JSON.stringify(payload)),
         branch: "main"
       };
       if (syncSha) body.sha = syncSha;
