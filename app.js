@@ -138,7 +138,7 @@ const LS_REPEAT = "ayah.repeat.v1";
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v25"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v26"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -1217,7 +1217,7 @@ async function pushSync() {
       const t = new Date();
       const hh = String(t.getHours()).padStart(2, "0");
       const mm = String(t.getMinutes()).padStart(2, "0");
-      syncStatusMsg("synced " + hh + ":" + mm);
+      syncStatusMsg("synced " + hh + ":" + mm + " → cloud ✓");
       ok = true;
     }
   } catch (e) {
@@ -1553,10 +1553,15 @@ function dailyVerseKey(offsetDays = 0) {
   const dayIndex = Math.floor(start / 86400000);
   return keyFromIndex(dayIndex % TOTAL_VERSES).key;
 }
-// A verse that is today's (or yesterday's) auto-daily seed is not a real user
-// read — never adopt or push one, so idle daily seeds can never win.
+// A verse that matches ANY of the last 7 days' auto-daily seeds is not a real
+// user read — never adopt or push it, so idle daily seeds (even a few days
+// stale, e.g. a seed left in the cloud by an old version) can never win.
 function isDailySeed(key) {
-  return !!key && (key === dailyVerseKey(0) || key === dailyVerseKey(-1));
+  if (!key) return true;
+  for (let off = 0; off >= -6; off--) {
+    if (key === dailyVerseKey(off)) return true;
+  }
+  return false;
 }
 
 function init() {

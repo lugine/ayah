@@ -155,6 +155,7 @@ console.log("\n--- Integration: verse loading pipeline ---");
   const yestSeed = dvk(-1);
   check("today's auto-daily verse counts as a seed", isDailySeed(todaySeed));
   check("yesterday's auto-daily verse counts as a seed", isDailySeed(yestSeed));
+  check("a 3-days-stale auto-daily verse counts as a seed", isDailySeed(dvk(-3)));
   check("a real reading spot (2:50) is NOT a seed", isDailySeed("2:50") === false);
 
   sandbox.localStorage.__store["ayah.lastVerse.v1"] = JSON.stringify(todaySeed);
