@@ -168,5 +168,15 @@ console.log("\n--- Integration: verse loading pipeline ---");
   const base = vm.runInContext("lastRemoteMemorized", sandbox);
   check("union baseline is a Set (never null)", !!base && typeof base.has === "function");
 
+  // --- Position carry-forward (v25): an empty device must NOT erase the cloud's position ---
+  sandbox.localStorage.__store["ayah.lastVerse.v1"] = JSON.stringify(null);
+  vm.runInContext("lastRemotePos = { verse: \"2:50\", savedAt: 123 };", sandbox);
+  const payloadCarry = vm.runInContext("collectSyncPayload()", sandbox);
+  check("empty device CARRY-FORWARDS the cloud position (2:50)", payloadCarry.lastVerse === "2:50");
+
+  sandbox.localStorage.__store["ayah.lastVerse.v1"] = JSON.stringify("2:55");
+  const payloadLocal = vm.runInContext("collectSyncPayload()", sandbox);
+  check("a device with a real local spot pushes ITS position (2:55)", payloadLocal.lastVerse === "2:55");
+
   console.log("\n" + (pass ? "ALL TESTS PASSED ✔" : "SOME TESTS FAILED ✘"));
 })();

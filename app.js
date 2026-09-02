@@ -138,7 +138,7 @@ const LS_REPEAT = "ayah.repeat.v1";
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v24"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v25"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -1047,6 +1047,12 @@ let syncSha = null; // last-known blob sha — compare-and-swap for writes
    ahead of a read can never write [] over real stars. */
 const LS_REMOTE_MEM = "ayah.remoteMemorized.v1";
 let lastRemoteMemorized = new Set(loadJSON(LS_REMOTE_MEM, []).filter((k) => typeof k === "string"));
+/* Position baseline: the last REAL reading position we saw in the cloud.
+   Unlike stars (a union), position is a single value — so a device with no
+   real spot of its own must CARRY THIS FORWARD on push, never erase it.
+   Persisted so a booting device still knows the cloud position. */
+const LS_REMOTE_POS = "ayah.remotePos.v1";
+let lastRemotePos = loadJSON(LS_REMOTE_POS, null);
 let baselineKnown = false; // true only once we've read the cloud this session
 // LS_SYNC_META / LS_SYNC_ON / LS_SYNC_TOKEN live in the top constants block.
 
@@ -1092,11 +1098,18 @@ function collectSyncPayload() {
   // is refreshed right before every push — see pushSync.)
   const merged = new Set([...state.memorized, ...lastRemoteMemorized]);
   const spot = loadJSON(LS_LAST, null);
+  // Real local reading spot? Use it (local "last read" wins).
+  // Otherwise CARRY FORWARD the last real position we saw in the cloud, so an
+  // idle/empty device can never erase your other device's position.
+  let lastVerse;
+  if (spot && !isDailySeed(spot)) {
+    lastVerse = spot;
+  } else if (lastRemotePos && lastRemotePos.verse && !isDailySeed(lastRemotePos.verse)) {
+    lastVerse = lastRemotePos.verse;
+  }
   return {
     memorized: [...merged],
-    // Only a REAL reading position may claim the cloud. An idle auto-daily
-    // verse (today's or yesterday's) is never authoritative.
-    lastVerse: spot && !isDailySeed(spot) ? spot : undefined,
+    lastVerse: lastVerse, // undefined only when the cloud itself has none
     reciterId: state.reciterId,
     repeat: state.repeat,
     speed: state.speed,
@@ -1129,7 +1142,8 @@ async function debugDump() {
     localLastVerse: loadJSON(LS_LAST, null),
     localLastNavAt: state.lastNavAt,
     localMemorized: [...state.memorized],
-    cachedCloudMemorized: [...lastRemoteMemorized]
+    cachedCloudMemorized: [...lastRemoteMemorized],
+    cachedCloudPosition: lastRemotePos ? lastRemotePos.verse : null
   };
   const willPush = collectSyncPayload();
   const report =
@@ -1404,15 +1418,19 @@ function applyRemote(remote, applyPosition) {
       refreshDisplayCheckboxes();
       touched = true;
     }
+    // Update the position baseline whenever the cloud holds a REAL position,
+    // whether or not this device adopts it right now. An empty device's next
+    // push will then carry this verse forward instead of erasing it.
+    if (typeof remote.lastVerse === "string" && !isDailySeed(remote.lastVerse) &&
+        indexFromKey(remote.lastVerse) >= 0 && indexFromKey(remote.lastVerse) < TOTAL_VERSES) {
+      lastRemotePos = { verse: remote.lastVerse, savedAt: remote.savedAt || 0 };
+      saveJSON(LS_REMOTE_POS, lastRemotePos);
+    }
     if (applyPosition && typeof remote.lastVerse === "string" &&
         remote.savedAt > state.lastNavAt &&
         !isDailySeed(remote.lastVerse) &&
         indexFromKey(remote.lastVerse) >= 0 && indexFromKey(remote.lastVerse) < TOTAL_VERSES &&
         remote.lastVerse !== state.currentKey) {
-      // The cloud's "last read" is a REAL read (not an idle daily seed) and is
-      // newer than any real navigation on this device — follow it. Adopting
-      // also updates lastNavAt so an echo of the same position isn't treated
-      // as new again.
       state.currentKey = remote.lastVerse;
       state.lastNavAt = Math.max(state.lastNavAt, remote.savedAt);
       saveJSON(LS_NAV_AT, state.lastNavAt);
@@ -1472,12 +1490,18 @@ function wireSync() {
       state.syncOn = true;
       saveJSON(LS_SYNC_ON, true);
       toast("Syncing…");
-      // Push this device's real state first (claims the cloud, and a stale
-      // daily seed in the cloud can't hijack you), then pull to adopt a
-      // genuinely newer real read from the other device.
-      await pushSync();
+      // Push this device's real state first (claims the cloud, carries forward
+      // the cloud's position/stars so nothing can be erased), then pull to
+      // adopt a genuinely newer real read from the other device.
+      const pushed = await pushSync();
       await pullSync(true);
       refreshSyncStatus();
+      if (pushed) {
+        console.log("[ayah sync] Sync Now: write landed on GitHub ✓");
+      } else {
+        syncStatusMsg("read-only sync — write was skipped (tap ⚙ Setup → Test)");
+        console.warn("[ayah sync] Sync Now: write did NOT land");
+      }
     });
   }
   document.addEventListener("visibilitychange", () => {
