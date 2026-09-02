@@ -21,6 +21,7 @@ const sandbox = {
     addEventListener() {}
   },
   localStorage: (() => { const m = {}; return { getItem(k){ return (k in m) ? m[k] : null; }, setItem(k, v){ m[k] = String(v); }, removeItem(k){ delete m[k]; }, __store: m }; })(),
+  btoa, atob,
   navigator: {},
   window: { addEventListener() {}, open() {} },
   fetch() { return Promise.reject(new Error("no net")); },
@@ -178,6 +179,15 @@ console.log("\n--- Integration: verse loading pipeline ---");
   sandbox.localStorage.__store["ayah.lastVerse.v1"] = JSON.stringify("2:55");
   const payloadLocal = vm.runInContext("collectSyncPayload()", sandbox);
   check("a device with a real local spot pushes ITS position (2:55)", payloadLocal.lastVerse === "2:55");
+
+  // --- b64decode regression (v27): the cloud pull MUST actually decode base64.
+  // The old implementation omitted atob — every pull failed to parse, pushes
+  // were blocked, and stars/position never merged. Lock the round-trip in.
+  const { b64encode, b64decode } = vm.runInContext("({b64encode, b64decode})", sandbox);
+  const sampleJson = JSON.stringify({ memorized: ["2:1", "2:2"], lastVerse: "2:50", device: "dev-regression" });
+  check("b64decode(b64encode(json)) round-trips exactly", b64decode(b64encode(sampleJson)) === sampleJson);
+  check("b64decode of a real GitHub-content payload parses to JSON object",
+    JSON.parse(b64decode(b64encode(sampleJson))).lastVerse === "2:50");
 
   console.log("\n" + (pass ? "ALL TESTS PASSED ✔" : "SOME TESTS FAILED ✘"));
 })();

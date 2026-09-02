@@ -138,7 +138,7 @@ const LS_REPEAT = "ayah.repeat.v1";
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v26"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v27"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -1058,7 +1058,10 @@ let baselineKnown = false; // true only once we've read the cloud this session
 
 function syncReady() { return !!(state.syncOn && state.syncToken); }
 function b64encode(str) { return btoa(unescape(encodeURIComponent(str))); }
-function b64decode(str) { return decodeURIComponent(escape(String(str).replace(/\s+/g, ""))); }
+// b64decode MUST actually base64-decode (atob) before URL-unescaping.
+// The old version omitted atob, so every cloud pull failed to parse — reads
+// returned null, and v23+ correctly refused to write ("couldn't read first").
+function b64decode(str) { return decodeURIComponent(escape(atob(String(str).replace(/\s+/g, "")))); }
 function ghHeaders(extra) {
   return Object.assign({
     Authorization: "Bearer " + state.syncToken,
