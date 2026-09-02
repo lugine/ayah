@@ -135,10 +135,11 @@ const LS_RECITER = "ayah.reciter.v1";
 const LS_AUDIOCACHE = "ayah.audioCache.v2"; // v2: invalidates broken mirror URLs cached by older versions
 const LS_AUTO = "ayah.auto.v1";
 const LS_REPEAT = "ayah.repeat.v1";
+const LS_LOOP = "ayah.loop.v1"; // multi-ayah loop range { on, from, to }
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v29"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v30"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -227,6 +228,7 @@ const state = {
   audioCache: loadJSON(LS_AUDIOCACHE, {}),
   autoPlay: loadJSON(LS_AUTO, false),
   repeat: Number(loadJSON(LS_REPEAT, 1)),
+  loop: normalizeLoop(loadJSON(LS_LOOP, null)),
   repeatCount: 0,
   speed: Number(loadJSON(LS_SPEED, 1)),
   display: loadJSON(LS_DISPLAY, ["en"]),
@@ -273,6 +275,12 @@ const dom = {
   audioFill: $("#audioFill"),
   audioEl: $("#audioEl"),
   btnAuto: $("#btnAuto"),
+  btnLoop: $("#btnLoop"),
+  loopRow: $("#loopRow"),
+  loopFromSurah: $("#loopFromSurah"),
+  loopFromAyah: $("#loopFromAyah"),
+  loopToSurah: $("#loopToSurah"),
+  loopToAyah: $("#loopToAyah"),
   repeatSelect: $("#repeatSelect"),
   speedSelect: $("#speedSelect"),
   dispEn: $("#dispEn"),
@@ -503,8 +511,8 @@ async function renderRead() {
   refreshAudio(key); // fire-and-forget; doesn't block the verse display
 }
 
-function populateSurahSelect() {
-  const sel = dom.readSurahSelect;
+function populateSurahSelect(sel) {
+  sel = sel || dom.readSurahSelect;
   sel.innerHTML = "";
   for (const s of SURAHS) {
     const opt = document.createElement("option");
@@ -514,9 +522,9 @@ function populateSurahSelect() {
   }
 }
 
-function populateAyahSelect(chapterId) {
+function populateAyahSelect(chapterId, sel) {
   const s = surahById(chapterId);
-  const sel = dom.readAyahSelect;
+  sel = sel || dom.readAyahSelect;
   sel.innerHTML = "";
   for (let a = 1; a <= s.ayahCount; a++) {
     const opt = document.createElement("option");
@@ -580,7 +588,7 @@ async function refreshAudio(key) {
       dom.audioEl.play().catch(() => {});
       dom.playIcon.style.display = "none";
       dom.pauseIcon.style.display = "";
-    } else if (state.autoPlay) {
+    } else if (state.autoPlay || loopActive()) {
       // Auto-play on arrival (the user asked for #1)
       dom.audioEl.src = url;
       dom.audioEl.playbackRate = state.speed;
@@ -589,7 +597,7 @@ async function refreshAudio(key) {
         dom.pauseIcon.style.display = "none";
       });
     }
-    if (state.autoPlay || wasPlaying) {
+    if (state.autoPlay || wasPlaying || loopActive()) {
       dom.playIcon.style.display = "none";
       dom.pauseIcon.style.display = "";
     }
@@ -638,6 +646,67 @@ function goShuffle() {
   navPending = true;
   state.currentKey = keyFromIndex(Math.floor(Math.random() * TOTAL_VERSES)).key;
   renderRead();
+}
+/* ---------- Loop a range of ayahs (multi-ayah repeat) ---------- */
+function normalizeLoop(raw) {
+  // Always returns a safe { on, from, to } — invalid/unknown endpoints are
+  // dropped so a bad cloud payload or old storage can never break playback.
+  const l = { on: false, from: null, to: null };
+  if (raw && typeof raw === "object") {
+    l.on = raw.on === true;
+    for (const k of ["from", "to"]) {
+      const v = typeof raw[k] === "string" ? raw[k] : null;
+      if (v && /^\d+:\d+$/.test(v) && indexFromKey(v) >= 0 && indexFromKey(v) < TOTAL_VERSES) {
+        l[k] = v;
+      }
+    }
+  }
+  return l;
+}
+function loopActive() {
+  return !!(state.loop && state.loop.on && state.loop.from && state.loop.to);
+}
+// What should happen when the current ayah's audio ends? Pure helper (unit-
+// tested): "wrap" = jump back to the start of the selection, "next" = play on,
+// "off" = loop disabled (fall back to the autoPlay logic).
+function loopAdvance() {
+  if (!loopActive()) return "off";
+  const cur = indexFromKey(state.currentKey);
+  const to = indexFromKey(state.loop.to);
+  return cur === to ? "wrap" : "next";
+}
+function syncLoopUI() {
+  if (!dom.btnLoop || !dom.loopRow) return;
+  populateSurahSelect(dom.loopFromSurah);
+  populateSurahSelect(dom.loopToSurah);
+  const fromChap = state.loop.from ? parseKey(state.loop.from).chapter : null;
+  const toChap = state.loop.to ? parseKey(state.loop.to).chapter : null;
+  if (fromChap) {
+    dom.loopFromSurah.value = String(fromChap);
+    populateAyahSelect(fromChap, dom.loopFromAyah);
+    dom.loopFromAyah.value = String(parseKey(state.loop.from).ayah);
+  }
+  if (toChap) {
+    dom.loopToSurah.value = String(toChap);
+    populateAyahSelect(toChap, dom.loopToAyah);
+    dom.loopToAyah.value = String(parseKey(state.loop.to).ayah);
+  }
+  dom.loopRow.hidden = !state.loop.on;
+  dom.btnLoop.classList.toggle("is-on", state.loop.on);
+  dom.btnLoop.setAttribute("aria-pressed", String(state.loop.on));
+}
+function setLoopEndpoint(which, chap, ayah) {
+  // Changing a surah resets that endpoint's ayah to 1 (same as the read
+  // selector). Keeps from ≤ to by moving the OTHER endpoint when out of order.
+  const key = `${chap}:${ayah}`;
+  state.loop[which] = key;
+  if (state.loop.from && state.loop.to &&
+      indexFromKey(state.loop.from) > indexFromKey(state.loop.to)) {
+    state.loop[which === "from" ? "to" : "from"] = key;
+  }
+  saveJSON(LS_LOOP, state.loop);
+  queuePush();
+  syncLoopUI();
 }
 function toggleMemorize() {
   const key = state.currentKey;
@@ -899,6 +968,20 @@ function wireEvents() {
     dom.btnAuto.setAttribute("aria-pressed", String(state.autoPlay));
     toast(state.autoPlay ? "Auto-play ON — advance to next ayah after audio" : "Auto-play OFF");
   });
+  dom.btnLoop.addEventListener("click", () => {
+    state.loop.on = !state.loop.on;
+    if (state.loop.on && (!state.loop.from || !state.loop.to)) {
+      // First enable: seed the selection with the ayah you're on.
+      state.loop.from = state.currentKey;
+      state.loop.to = state.currentKey;
+    }
+    saveJSON(LS_LOOP, state.loop);
+    queuePush();
+    syncLoopUI();
+    toast(state.loop.on
+      ? `Loop ON — ${state.loop.from} → ${state.loop.to} repeats until you pause`
+      : "Loop OFF");
+  });
   dom.refreshBtn.addEventListener("click", () => checkForUpdates(true));
   dom.repeatSelect.addEventListener("change", () => {
     state.repeat = Number(dom.repeatSelect.value);
@@ -907,6 +990,10 @@ function wireEvents() {
     queuePush();
     toast(`Repeat: ${state.repeat}×`);
   });
+  dom.loopFromSurah.addEventListener("change", () => setLoopEndpoint("from", Number(dom.loopFromSurah.value), 1));
+  dom.loopFromAyah.addEventListener("change", () => setLoopEndpoint("from", Number(dom.loopFromSurah.value), Number(dom.loopFromAyah.value)));
+  dom.loopToSurah.addEventListener("change", () => setLoopEndpoint("to", Number(dom.loopToSurah.value), 1));
+  dom.loopToAyah.addEventListener("change", () => setLoopEndpoint("to", Number(dom.loopToSurah.value), Number(dom.loopToAyah.value)));
   dom.speedSelect.addEventListener("change", () => {
     state.speed = Number(dom.speedSelect.value);
     saveJSON(LS_SPEED, state.speed);
@@ -947,6 +1034,19 @@ function wireEvents() {
       }
     }
     state.repeatCount = 0; // reset for the next verse
+    const loopStep = loopAdvance();
+    if (loopStep === "wrap") {
+      // Finished the last ayah of the selection: jump back to its first ayah
+      // and keep playing. (From === To means one ayah loops until paused.)
+      navPending = true;
+      state.currentKey = state.loop.from;
+      renderRead();
+      return;
+    }
+    if (loopStep === "next") {
+      goNext(); // still inside the selection — play on
+      return;
+    }
     if (state.autoPlay) {
       goNext(); // continue to the next ayah (#2)
     } else {
@@ -1135,6 +1235,7 @@ function collectSyncPayload() {
     repeat: state.repeat,
     speed: state.speed,
     autoPlay: state.autoPlay,
+    loop: { on: state.loop.on, from: state.loop.from, to: state.loop.to },
     display: state.display,
     savedAt: Date.now(),
     device: deviceId()
@@ -1432,6 +1533,14 @@ function applyRemote(remote, applyPosition) {
       }
       touched = true;
     }
+    const rLoop = normalizeLoop(remote.loop);
+    if ((rLoop.on || rLoop.from || rLoop.to) &&
+        JSON.stringify(rLoop) !== JSON.stringify(state.loop)) {
+      state.loop = rLoop;
+      saveJSON(LS_LOOP, state.loop);
+      syncLoopUI();
+      touched = true;
+    }
     if (Array.isArray(remote.display) && remote.display.length &&
         JSON.stringify(remote.display) !== JSON.stringify(state.display)) {
       state.display = remote.display;
@@ -1611,6 +1720,7 @@ function init() {
   dom.repeatSelect.value = String(state.repeat);
   dom.speedSelect.value = String(state.speed);
   applySpeed();
+  syncLoopUI();
   refreshDisplayCheckboxes();
 
   const initChap = parseKey(state.currentKey).chapter;

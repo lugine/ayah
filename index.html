@@ -106,6 +106,7 @@
             </button>
             <div class="audio-track" aria-hidden="true"><div class="audio-fill" id="audioFill"></div></div>
             <button class="audio-toggle" id="btnAuto" title="Auto-play and continue to next ayah" aria-pressed="false">🔁</button>
+            <button class="audio-toggle" id="btnLoop" title="Loop a range of ayahs" aria-pressed="false">🔂</button>
             <select id="repeatSelect" class="miniselect miniselect-narrow" aria-label="Repeat count" title="Repeat this ayah">
               <option value="1">1×</option>
               <option value="2">2×</option>
@@ -123,6 +124,14 @@
               <option value="2">2×</option>
             </select>
             <select id="reciterSelect" class="miniselect" aria-label="Reciter"></select>
+          </div>
+          <div class="loop-row" id="loopRow" hidden>
+            <span>Loop</span>
+            <select id="loopFromSurah" class="miniselect" aria-label="Loop from surah"></select>
+            <select id="loopFromAyah" class="miniselect miniselect-narrow" aria-label="Loop from ayah"></select>
+            <span class="loop-arrow">→</span>
+            <select id="loopToSurah" class="miniselect" aria-label="Loop to surah"></select>
+            <select id="loopToAyah" class="miniselect miniselect-narrow" aria-label="Loop to ayah"></select>
           </div>
         </div>
       </section>

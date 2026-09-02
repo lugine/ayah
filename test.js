@@ -189,5 +189,27 @@ console.log("\n--- Integration: verse loading pipeline ---");
   check("b64decode of a real GitHub-content payload parses to JSON object",
     JSON.parse(b64decode(b64encode(sampleJson))).lastVerse === "2:50");
 
+  // --- Multi-ayah loop (v30) ---
+  vm.runInContext('state.loop = { on: true, from: "2:1", to: "2:3" }; state.currentKey = "2:3";', sandbox);
+  check("loop WRAPS at the end of the selection (2:3 → back to 2:1)",
+    vm.runInContext("loopAdvance()", sandbox) === "wrap");
+  vm.runInContext('state.currentKey = "2:2";', sandbox);
+  check("loop CONTINUES inside the selection (2:2)", vm.runInContext("loopAdvance()", sandbox) === "next");
+  vm.runInContext('state.currentKey = "3:5";', sandbox);
+  check("loop keeps playing through when outside the selection", vm.runInContext("loopAdvance()", sandbox) === "next");
+  vm.runInContext("state.loop.on = false;", sandbox);
+  check("loop OFF falls back to the autoPlay logic", vm.runInContext("loopAdvance()", sandbox) === "off");
+  const nl = vm.runInContext('normalizeLoop({ on: true, from: "2:1", to: "999:999" })', sandbox);
+  check("normalizeLoop drops an invalid endpoint, keeps a valid one",
+    nl.on === true && nl.from === "2:1" && nl.to === null);
+  const nlEmpty = vm.runInContext("normalizeLoop(undefined)", sandbox);
+  check("normalizeLoop(undefined) is a safe empty loop",
+    nlEmpty.on === false && nlEmpty.from === null && nlEmpty.to === null);
+  sandbox.localStorage.__store["ayah.lastVerse.v1"] = JSON.stringify("2:50");
+  vm.runInContext('state.loop = { on: true, from: "2:1", to: "2:3" };', sandbox);
+  const payloadLoop = vm.runInContext("collectSyncPayload()", sandbox);
+  check("payload includes the loop range for cross-device sync",
+    payloadLoop.loop.on === true && payloadLoop.loop.from === "2:1" && payloadLoop.loop.to === "2:3");
+
   console.log("\n" + (pass ? "ALL TESTS PASSED ✔" : "SOME TESTS FAILED ✘"));
 })();
