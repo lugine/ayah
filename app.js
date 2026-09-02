@@ -138,7 +138,7 @@ const LS_REPEAT = "ayah.repeat.v1";
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v28"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v29"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -920,11 +920,29 @@ function wireEvents() {
 
   dom.audioEl.addEventListener("ended", () => {
     if (state.repeat > 1) {
-      // Repeat this ayah the chosen number of times first
+      // Repeat this ayah the chosen number of times first.
+      // Restart cleanly: pause, rewind to 0, reset the fill bar, then give the
+      // element one animation-frame before play() so Chrome/iOS WebKit actually
+      // re-triggers from the beginning instead of stalling at the end marker.
       state.repeatCount++;
       if (state.repeatCount < state.repeat) {
-        dom.audioEl.currentTime = 0;
-        dom.audioEl.play().catch(() => {});
+        const el = dom.audioEl;
+        el.pause();
+        el.currentTime = 0;
+        dom.audioFill.style.width = "0%";
+        // Guard for any environment without rAF (tests, older engines): fall
+        // back to playing on the next macrotask instead.
+        const raf = (typeof requestAnimationFrame === "function")
+          ? requestAnimationFrame
+          : (cb) => setTimeout(cb, 0);
+        raf(() => {
+          el.play()
+            .then(() => {
+              dom.playIcon.style.display = "none";
+              dom.pauseIcon.style.display = "";
+            })
+            .catch(() => {});
+        });
         return;
       }
     }
