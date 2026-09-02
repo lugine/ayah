@@ -451,8 +451,12 @@ main { display: block; }
              calc(12px + env(safe-area-inset-right));
   }
   .brand-sub { display: none; }
-  .read-actions { grid-template-columns: 1fr; }
-  .read-actions .btn-toggle { order: -1; }
+  .read-actions { grid-template-columns: 1fr auto 1fr; gap: 8px; }
+  .read-actions .btn { min-width: 0; white-space: nowrap; }
+  .read-actions #btnMemorize { order: 0; }
+  /* On narrow phones, keep Prev/Next/Memorize ALL on one row like the Mac —
+     just drop the word labels so the row never overflows; the arrows remain. */
+  .read-actions .nav-label { display: none; }
   .widget-card { padding: 18px 14px; }
   .tab { font-size: 13px; padding: 9px 8px; }
 }
