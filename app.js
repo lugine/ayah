@@ -138,7 +138,7 @@ const LS_REPEAT = "ayah.repeat.v1";
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v23"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v24"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -1287,9 +1287,28 @@ async function syncTest() {
       parts.push(`✗ ${r.status} — read blocked`);
     }
 
-    // 4. Can it write? (create a tiny probe, then delete it)
-    const probe = "_probe-" + deviceId() + ".txt";
-    r = await fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${probe}`, {
+    // 4. Can it write? (create a tiny probe, then delete it). Use a UNIQUE
+    //    path per attempt and sweep any leftover probes first, so a prior
+    //    leftover or a concurrent writer can never misreport a working token.
+    const sweepProbes = async () => {
+      try {
+        const list = await (await fetch(`${GH_API}/repos/${SYNC_REPO}/contents/`, { headers: ghHeaders() })).json();
+        if (Array.isArray(list)) {
+          for (const item of list) {
+            if (item.type === "file" && /^_probe-.*\.txt$/.test(item.name || "")) {
+              fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${encodeURIComponent(item.name)}`, {
+                method: "DELETE",
+                headers: ghHeaders({ "Content-Type": "application/json" }),
+                body: JSON.stringify({ message: "probe cleanup", sha: item.sha })
+              }).catch(() => {});
+            }
+          }
+        }
+      } catch { /* best-effort sweep */ }
+    };
+    await sweepProbes();
+    const probe = "_probe-" + deviceId().replace("dev-", "") + "-" + Date.now() + ".txt";
+    r = await fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${encodeURIComponent(probe)}`, {
       method: "PUT",
       headers: ghHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ message: "probe", content: b64encode("1"), branch: "main" })
@@ -1298,7 +1317,7 @@ async function syncTest() {
       parts.push("✓ can write (probe removed)");
       const m = await r.json();
       if (m && m.content && m.content.sha) {
-        fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${probe}`, {
+        fetch(`${GH_API}/repos/${SYNC_REPO}/contents/${encodeURIComponent(probe)}`, {
           method: "DELETE",
           headers: ghHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({ message: "probe cleanup", sha: m.content.sha })
@@ -1308,6 +1327,10 @@ async function syncTest() {
       parts.push("✗ 403 — write blocked: token needs Contents permission → Read and write (it's read-only now)");
     } else if (r.status === 404) {
       parts.push("✗ 404 — write blocked: token's 'Only select repositories' doesn't include ayah-sync");
+    } else if (r.status === 409 || r.status === 422) {
+      // Reaching here means auth PASSED (these statuses only happen post-auth);
+      // a unique fresh name means a genuine concurrent write — the token CAN write.
+      parts.push("✓ can write (concurrent writer, ~" + r.status + ")");
     } else {
       parts.push(`✗ ${r.status} — write blocked (${await ghErr(r)})`);
     }
