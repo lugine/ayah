@@ -20,7 +20,7 @@ const sandbox = {
     createElement() { return makeEl(); },
     addEventListener() {}
   },
-  localStorage: { getItem() { return null; }, setItem() {} },
+  localStorage: (() => { const m = {}; return { getItem(k){ return (k in m) ? m[k] : null; }, setItem(k, v){ m[k] = String(v); }, removeItem(k){ delete m[k]; }, __store: m }; })(),
   navigator: {},
   window: { addEventListener() {}, open() {} },
   fetch() { return Promise.reject(new Error("no net")); },
@@ -147,6 +147,26 @@ console.log("\n--- Integration: verse loading pipeline ---");
   check("loadTafsir flattens HTML + strips footnotes", tf1 === "Explanation here.");
   const tf2 = await loadTafsir("1:5");
   check("loadTafsir served from cache", tf2 === tf1);
+
+  // --- Sync anti-clobber invariants (v23) ---
+  const { collectSyncPayload, isDailySeed, dailyVerseKey: dvk } = vm.runInContext(
+    "({collectSyncPayload, isDailySeed, dailyVerseKey})", sandbox);
+  const todaySeed = dvk();
+  const yestSeed = dvk(-1);
+  check("today's auto-daily verse counts as a seed", isDailySeed(todaySeed));
+  check("yesterday's auto-daily verse counts as a seed", isDailySeed(yestSeed));
+  check("a real reading spot (2:50) is NOT a seed", isDailySeed("2:50") === false);
+
+  sandbox.localStorage.__store["ayah.lastVerse.v1"] = JSON.stringify(todaySeed);
+  const payloadSeed = vm.runInContext("collectSyncPayload()", sandbox);
+  check("payload omits an idle daily-seed position", payloadSeed.lastVerse === undefined);
+
+  sandbox.localStorage.__store["ayah.lastVerse.v1"] = JSON.stringify("2:50");
+  const payloadReal = vm.runInContext("collectSyncPayload()", sandbox);
+  check("payload carries a real reading position", payloadReal.lastVerse === "2:50");
+
+  const base = vm.runInContext("lastRemoteMemorized", sandbox);
+  check("union baseline is a Set (never null)", !!base && typeof base.has === "function");
 
   console.log("\n" + (pass ? "ALL TESTS PASSED ✔" : "SOME TESTS FAILED ✘"));
 })();

@@ -138,7 +138,7 @@ const LS_REPEAT = "ayah.repeat.v1";
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v22"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v23"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -1041,7 +1041,13 @@ const GH_API = "https://api.github.com";
 const SYNC_REPO = "lugine/ayah-sync";
 const SYNC_FILE = "sync.json";
 let syncSha = null; // last-known blob sha — compare-and-swap for writes
-let lastRemoteMemorized = new Set(); // last set seen in the cloud — pushes never shrink stars
+/* The UNION baseline that stops any device from erasing another device's
+   stars. We PERSIST the last set we saw in the cloud and only treat an empty
+   pull as "cloud is empty" after we ACTUALLY read it — so a push that races
+   ahead of a read can never write [] over real stars. */
+const LS_REMOTE_MEM = "ayah.remoteMemorized.v1";
+let lastRemoteMemorized = new Set(loadJSON(LS_REMOTE_MEM, []).filter((k) => typeof k === "string"));
+let baselineKnown = false; // true only once we've read the cloud this session
 // LS_SYNC_META / LS_SYNC_ON / LS_SYNC_TOKEN live in the top constants block.
 
 function syncReady() { return !!(state.syncOn && state.syncToken); }
@@ -1082,11 +1088,15 @@ function syncStatusMsg(msg) {
 }
 function collectSyncPayload() {
   // Union local stars with the last set we saw in the cloud so a push from one
-  // device can never erase a star another device added.
+  // device can never erase a star another device added. (lastRemoteMemorized
+  // is refreshed right before every push — see pushSync.)
   const merged = new Set([...state.memorized, ...lastRemoteMemorized]);
+  const spot = loadJSON(LS_LAST, null);
   return {
     memorized: [...merged],
-    lastVerse: loadJSON(LS_LAST, null) || undefined, // omit when no real spot
+    // Only a REAL reading position may claim the cloud. An idle auto-daily
+    // verse (today's or yesterday's) is never authoritative.
+    lastVerse: spot && !isDailySeed(spot) ? spot : undefined,
     reciterId: state.reciterId,
     repeat: state.repeat,
     speed: state.speed,
@@ -1094,7 +1104,7 @@ function collectSyncPayload() {
     display: state.display,
     savedAt: Date.now(),
     device: deviceId()
-     };
+  };
 }
 /* ---- Diagnostics: triple-tap the footer to dump local/cloud/will-push ---- */
 async function debugDump() {
@@ -1115,6 +1125,7 @@ async function debugDump() {
     thisDevice: deviceId(),
     syncTokenPresent: !!state.syncToken,
     syncReady: syncReady(),
+    baselineKnown: baselineKnown,
     localLastVerse: loadJSON(LS_LAST, null),
     localLastNavAt: state.lastNavAt,
     localMemorized: [...state.memorized],
@@ -1144,6 +1155,17 @@ async function pushSync() {
   let ok = false;
   try {
     for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+      // CORE ANTI-CLOBBER GUARD: before writing, always read the cloud first
+      // and union against it. A device that cannot READ must not WRITE — its
+      // view of the world is unknowably stale, and writing would erase stars
+      // another device made. applyPosition=false, so a stale cloud position can
+      // never yank this device's real spot either.
+      const baseline = await pullSync(false);
+      if (baseline) applyRemote(baseline, false);
+      if (!baselineKnown) {
+        syncStatusMsg("sync paused — couldn't read cloud first (will retry)");
+        break;
+      }
       const payload = collectSyncPayload();
       // Visible proof of what this device is writing to the cloud.
       console.log("[ayah sync] pushing", JSON.stringify(payload));
@@ -1202,19 +1224,21 @@ async function pullSync(applyPosition) {
       // token can't see the private repo. Probe the repo endpoint to tell apart.
       try {
         const rp = await fetch(`${GH_API}/repos/${SYNC_REPO}`, { headers: ghHeaders() });
-        if (rp.ok) { syncSha = null; return null; } // repo visible → file not created yet; we'll create it
+        if (rp.ok) { syncSha = null; baselineKnown = true; return null; } // repo visible → file not created yet; cloud is KNOWN empty
       } catch { /* fall through to the warning below */ }
       await syncFail(res, "✗ token can't access the sync repo — re-create token & select 'ayah-sync'");
+      baselineKnown = false;
       return null;
     }
-    if (res.status === 401) { await syncFail(res, "✗ token invalid or revoked"); return null; }
-    if (res.status === 403) { await syncFail(res, "✗ token can't read (needs Contents access)"); return null; }
-    if (!res.ok) { await syncFail(res, "✗ pull failed"); return null; }
+    if (res.status === 401) { baselineKnown = false; await syncFail(res, "✗ token invalid or revoked"); return null; }
+    if (res.status === 403) { baselineKnown = false; await syncFail(res, "✗ token can't read (needs Contents access)"); return null; }
+    if (!res.ok) { baselineKnown = false; await syncFail(res, "✗ pull failed"); return null; }
     const meta = await res.json();
     syncSha = meta.sha || null;
     let remote = null;
     try { remote = JSON.parse(b64decode(meta.content || "")); } catch { remote = null; }
     if (remote && typeof remote === "object") {
+      baselineKnown = true;
       applyRemote(remote, applyPosition);
       const t = new Date();
       const hh = String(t.getHours()).padStart(2, "0");
@@ -1224,6 +1248,7 @@ async function pullSync(applyPosition) {
     }
     return null;
   } catch (e) {
+    baselineKnown = false;
     syncStatusMsg("network error (" + (e && e.message ? e.message : "fetch failed") + ") — will retry");
     return null;
   }
@@ -1294,7 +1319,12 @@ async function syncTest() {
 }
 function applyRemote(remote, applyPosition) {
   let touched = false;
-  if (Array.isArray(remote.memorized)) lastRemoteMemorized = new Set(remote.memorized.filter((k) => typeof k === "string"));
+  // Keep the union baseline in sync with the cloud AND persisted to disk, so a
+  // later push unions against what the cloud actually holds.
+  if (Array.isArray(remote.memorized)) {
+    lastRemoteMemorized = new Set(remote.memorized.filter((k) => typeof k === "string"));
+    saveJSON(LS_REMOTE_MEM, [...lastRemoteMemorized]);
+  }
   // Memorized stars: UNION — never lose a star either device made
   if (Array.isArray(remote.memorized) && remote.memorized.length) {
     const before = state.memorized.size;
@@ -1522,17 +1552,19 @@ function init() {
   registerSW();
   checkForUpdates(false); // quiet: keep the SW on the latest build
 
-  // Sync flow depends on whether this device has a real reading spot:
-//  - Real spot (e.g. your Mac at Al-Baqarah): PUSH first so this device claims
-//    the cloud, then pull WITHOUT adopting (a stale daily-seed verse on the
-//    cloud must never teleport away your own spot).
-//  - Fresh / daily-seeded device (no real spot): PULL first to adopt wherever
-//    you actually last read, then push (a fresh device pushes no position, so
-//    it can't clobber the cloud).
+  // Sync flow. pushSync ALWAYS reads the cloud first (see its baseline guard),
+  // so this is safe regardless of order:
+  //  - Device with a real spot (e.g. your Mac at Al-Baqarah): push to claim it
+  //    (the read-first guard also re-uses the cloud's star set, so nothing can
+  //    be erased). No adopting pull — a stale daily seed can't yank you away.
+  //  - Fresh / daily-seeded device: pull FIRST to adopt wherever you actually
+  //    last read (real spots only — daily seeds are ignored), then push the
+  //    union back (a fresh device pushes no daily-seed position either).
   if (syncReady()) {
-    const hasRealSpot = !!(loadJSON(LS_LAST, null) && !isDailySeed(loadJSON(LS_LAST, null)));
+    const spot = loadJSON(LS_LAST, null);
+    const hasRealSpot = spot && !isDailySeed(spot);
     if (hasRealSpot) {
-      pushSync().then(() => pullSync(false)).catch(() => {});
+      pushSync().catch(() => {});
     } else {
       pullSync(true).then(() => pushSync()).catch(() => {});
     }
