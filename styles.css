@@ -8,6 +8,7 @@
   --line: #e4e0d4;
   --accent: #0f5b3d;
   --accent-soft: #e3efe8;
+  --word-hl: rgba(255, 209, 61, 0.92);
   --star: #b8860b;
   --danger: #a33;
   --radius: 20px;
@@ -23,6 +24,7 @@
     --line: #243a30;
     --accent: #54c98f;
     --accent-soft: #1c3a2c;
+    --word-hl: rgba(255, 209, 61, 0.3);
     --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   }
 }
@@ -186,6 +188,13 @@ main { display: block; }
   margin: 6px 0 16px;
   overflow-wrap: anywhere;
 }
+/* Word-by-word highlight while the recitation plays */
+.qword {
+  padding: 0 0.06em;
+  border-radius: 0.35em;
+  transition: background-color 0.12s ease;
+}
+.qword-active { background-color: var(--word-hl); }
 /* Big Western-numeral ayah marker at the end of the verse (Quran.com style) */
 .ayah-badge {
   display: inline-flex;

@@ -18,6 +18,7 @@ const sandbox = {
     querySelector() { return makeEl(); },
     querySelectorAll() { return []; },
     createElement() { return makeEl(); },
+    createTextNode(t) { return { nodeValue: t, textContent: t }; },
     addEventListener() {}
   },
   localStorage: (() => { const m = {}; return { getItem(k){ return (k in m) ? m[k] : null; }, setItem(k, v){ m[k] = String(v); }, removeItem(k){ delete m[k]; }, __store: m }; })(),
@@ -210,6 +211,48 @@ console.log("\n--- Integration: verse loading pipeline ---");
   const payloadLoop = vm.runInContext("collectSyncPayload()", sandbox);
   check("payload includes the loop range for cross-device sync",
     payloadLoop.loop.on === true && payloadLoop.loop.from === "2:1" && payloadLoop.loop.to === "2:3");
+
+  // --- Word-by-word highlight timing (v31) ---
+  const segsFn = vm.runInContext("ayahSegmentsFromSurahTimings", sandbox);
+  const surahVT = [{ verse_key: "2:6", timestamp_from: 55250, timestamp_to: 67870,
+    segments: [[1, 55205, 56465], [2, 56465, 57375], [3, 57375, 58115]] }];
+  const s26 = segsFn(surahVT, "2:6");
+  check("segments rebase onto the per-ayah file (ayah-relative, start at 0)",
+    !!s26 && s26[0][0] === 1 && s26[0][1] === 0 && s26[1][1] === 56465 - 55250);
+  check("a segment starting before the ayah cut clamps to 0", s26[0][1] === 0);
+  check("segments return null for an unknown verse key", segsFn(surahVT, "3:1") === null);
+  // Real-data quirk: a word can be split into a 2-element continuation segment
+  // [pos, from] that has no end time and runs to the ayah end (v31, 2:255 word 50)
+  const splitVT = [{ verse_key: "112:1", timestamp_from: 1000, timestamp_to: 5000,
+    segments: [[1, 1000, 2000], [2, 2000, 3000], [2, 3000]] }];
+  const sSplit = segsFn(splitVT, "112:1");
+  check("a 2-element continuation segment runs to the ayah end",
+    sSplit.length === 3 && sSplit[2][1] === 2000 && sSplit[2][2] === 4000);
+  const prop = vm.runInContext("proportionalSegments(4, 1000)", sandbox);
+  check("proportional fallback covers the verse evenly",
+    prop.length === 4 && prop[0][1] === 0 && prop[3][2] === 1000);
+  check("proportional fallback rejects impossible input",
+    vm.runInContext("proportionalSegments(0, 1000)", sandbox) === null &&
+    vm.runInContext("proportionalSegments(4, NaN)", sandbox) === null);
+  const pick = vm.runInContext("pickActiveWord", sandbox);
+  check("pickActiveWord finds the word playing at 1500ms (word 2)", pick(s26, 1500) === 2);
+  check("pickActiveWord past the last word keeps the last word", pick(s26, 9999) === 3);
+  check("pickActiveWord before the first word returns 0", pick(s26, -5) === 0);
+  check("pickActiveWord inside a gap keeps the previous word lit",
+    pick([[1, 0, 100], [2, 200, 300]], 150) === 1);
+  check("pickActiveWord with no data returns 0", pick(null, 100) === 0);
+  check("a split word still highlights as one word at both spans",
+    pick(sSplit, 2500) === 2 && pick(sSplit, 3500) === 2);
+  const wl = vm.runInContext("wordListFromApi", sandbox);
+  const apiWords = [
+    { char_type_name: "word", position: 1, text: "ذَٰلِكَ" },
+    { char_type_name: "end", position: 2, text: "﴿١﴾" },
+    { char_type_name: "word", position: 3, text: "ٱلْكِتَـٰبُ" }
+  ];
+  const wlOut = wl(apiWords);
+  check("word list keeps only renderable words (drops the ayah medallion)",
+    wlOut.length === 2 && wlOut[0].position === 1 && wlOut[1].position === 3);
+  check("word list tolerates garbage input", wl(null).length === 0 && wl(undefined).length === 0);
 
   console.log("\n" + (pass ? "ALL TESTS PASSED ✔" : "SOME TESTS FAILED ✘"));
 })();

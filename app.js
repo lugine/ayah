@@ -133,13 +133,15 @@ const LS_VERSECACHE = "ayah.verseCache.v1";
 const AUDIO_BASE = "https://verses.quran.com/";
 const LS_RECITER = "ayah.reciter.v1";
 const LS_AUDIOCACHE = "ayah.audioCache.v2"; // v2: invalidates broken mirror URLs cached by older versions
+const QDC_BASE = "https://api.qurancdn.com/api/qdc"; // quran.com site API — per-word segment timings
+const LS_WORDTIMING = "ayah.wordTiming.v1";
 const LS_AUTO = "ayah.auto.v1";
 const LS_REPEAT = "ayah.repeat.v1";
 const LS_LOOP = "ayah.loop.v1"; // multi-ayah loop range { on, from, to }
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v30"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v31"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -226,6 +228,9 @@ const state = {
   chapterCache: {},
   reciterId: Number(loadJSON(LS_RECITER, 7)),
   audioCache: loadJSON(LS_AUDIOCACHE, {}),
+  wordTimingCache: loadJSON(LS_WORDTIMING, {}),
+  wordTiming: null, // { key, reciterId, segs, prop } — active word-highlight timing
+  wordCountFor: 0, // word count of the currently rendered ayah (for fallback timing)
   autoPlay: loadJSON(LS_AUTO, false),
   repeat: Number(loadJSON(LS_REPEAT, 1)),
   loop: normalizeLoop(loadJSON(LS_LOOP, null)),
@@ -358,7 +363,7 @@ function htmlToText(html, cap) {
 const verseCache = loadJSON(LS_VERSECACHE, {});
 
 async function fetchVerse(key) {
-  const url = `${API_BASE}/verses/by_key/${key}?translations=${TRANS_ID}&fields=text_imlaei`;
+  const url = `${API_BASE}/verses/by_key/${key}?translations=${TRANS_ID}&fields=text_imlaei&words=true&word_fields=text_imlaei`;
   const res = await fetch(url, { headers: { Accept: "application/json" } });
   if (!res.ok) throw new Error("API error " + res.status);
   const json = await res.json();
@@ -366,17 +371,19 @@ async function fetchVerse(key) {
   return {
     ar: v.text_imlaei || v.text_uthmani || "",
     en: (v.translations && v.translations[0] && v.translations[0].text) || "",
+    words: wordListFromApi(v.words),
     meta: `${surahNameFor(key)} • ${v.verse_key}`
   };
 }
 
 async function loadVerse(key) {
-  // 1) memory / localStorage cache
-  if (verseCache[key]) return verseCache[key];
+  // 1) memory / localStorage cache — only trusted when it already carries words
+  //    (entries saved by pre-v31 versions lack them; refetch to upgrade)
+  if (verseCache[key] && verseCache[key].words) return verseCache[key];
   // 2) network (Quran.com)
   try {
     const data = await fetchVerse(key);
-    verseCache[key] = data;
+    verseCache[key] = verseCache[key] ? Object.assign({}, verseCache[key], data) : data;
     saveJSON(LS_VERSECACHE, verseCache); // keep at most ~400 entries
     const keys = Object.keys(verseCache);
     if (keys.length > 400) {
@@ -385,11 +392,140 @@ async function loadVerse(key) {
     }
     return data;
   } catch (err) {
-    // 3) curated offline fallback
+    // 3) stale-but-usable cached entry beats an error
+    if (verseCache[key]) return verseCache[key];
+    // 4) curated offline fallback
     const fb = FALLBACK[key];
     if (fb) return { ar: fb.ar, en: fb.en, meta: `${surahNameFor(key)} • ${key}` };
     throw err;
   }
+}
+
+/* ================================================================
+   Word-by-word highlight timing (quran.com qdc segment data)
+   ================================================================ */
+const surahTimingMemo = new Map(); // session cache: `${reciterId}:${surah}` -> verse_timings[]
+
+// Pure: keep only the renderable words from the v4 verse.words list.
+// The ayah-number medallion arrives as char_type_name "end" — excluded here
+// (the app renders its own .ayah-badge instead).
+function wordListFromApi(words) {
+  if (!Array.isArray(words)) return [];
+  return words
+    .filter((w) => w && w.char_type_name === "word" && typeof w.position === "number")
+    .map((w) => ({
+      position: w.position,
+      text: (typeof w.text_imlaei === "string" && w.text_imlaei) || (typeof w.text === "string" ? w.text : "")
+    }))
+    .filter((w) => w.text);
+}
+
+// Pure: qdc segments are [[wordPos, fromMs, toMs], ...] measured against the
+// WHOLE-surah audio file. The app plays per-ayah mp3s cut from the same
+// recitation, so subtracting the ayah's timestamp_from rebases them onto the
+// per-ayah file. Quirks found in real data: a segment may be a 2-element
+// continuation [pos, from] meaning "runs to the ayah end", and a single word
+// can be split across two segments (same position, consecutive spans).
+function ayahSegmentsFromSurahTimings(verseTimings, key) {
+  if (!Array.isArray(verseTimings)) return null;
+  const entry = verseTimings.find((vt) => vt && vt.verse_key === key);
+  if (!entry || !Array.isArray(entry.segments) || !entry.segments.length) return null;
+  const base = Number(entry.timestamp_from) || 0;
+  const ayahEndRaw = Number(entry.timestamp_to);
+  const segs = [];
+  for (const s of entry.segments) {
+    if (!Array.isArray(s) || s.length < 2) continue;
+    const pos = Number(s[0]);
+    const fromRaw = Number(s[1]);
+    let toRaw = s.length >= 3 ? Number(s[2]) : ayahEndRaw;
+    if (!isFinite(toRaw) || toRaw <= fromRaw) toRaw = isFinite(ayahEndRaw) ? ayahEndRaw : fromRaw + 1;
+    const from = Math.max(0, fromRaw - base);
+    const to = toRaw - base;
+    if (!isFinite(pos) || !isFinite(from) || !isFinite(to) || to <= from) continue;
+    segs.push([pos, from, to]);
+  }
+  return segs.length ? segs : null;
+}
+
+// Pure: even distribution fallback for reciters with no segment data.
+function proportionalSegments(wordCount, durationMs) {
+  const n = Number(wordCount) | 0;
+  const dur = Number(durationMs);
+  if (n <= 0 || !isFinite(dur) || dur <= 0) return null;
+  const segs = [];
+  for (let i = 0; i < n; i++) segs.push([i + 1, (i / n) * dur, ((i + 1) / n) * dur]);
+  return segs;
+}
+
+// Pure: which word position is active at time ms (binary search; a gap in the
+// segments keeps the previous word lit rather than going dark).
+function pickActiveWord(segs, ms) {
+  if (!Array.isArray(segs) || !segs.length) return 0;
+  const t = Number(ms);
+  if (!isFinite(t) || t < segs[0][1]) return 0;
+  let lo = 0, hi = segs.length - 1, ans = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (segs[mid][1] <= t) { ans = mid; lo = mid + 1; } else { hi = mid - 1; }
+  }
+  return segs[ans][0] || 0;
+}
+
+async function loadWordTiming(key) {
+  const reciterId = state.reciterId;
+  const { surah } = parseKey(key);
+  const memoKey = `${reciterId}:${surah}`;
+  let timings = surahTimingMemo.get(memoKey);
+  if (!timings) {
+    // Instant path: a per-ayah slice saved from an earlier session.
+    const saved = state.wordTimingCache[`${reciterId}:${key}`];
+    if (saved && Array.isArray(saved.segs) && saved.segs.length) {
+      state.wordTiming = { key, reciterId, segs: saved.segs, prop: !!saved.prop };
+      return state.wordTiming;
+    }
+    try {
+      const url = `${QDC_BASE}/audio/reciters/${reciterId}/audio_files?chapter=${surah}&segments=true`;
+      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      if (!res.ok) throw new Error("qdc " + res.status);
+      const json = await res.json();
+      const files = (json && json.audio_files) || [];
+      timings = files[0] && files[0].verse_timings ? files[0].verse_timings : [];
+    } catch {
+      timings = [];
+    }
+    surahTimingMemo.set(memoKey, timings);
+  }
+  let segs = ayahSegmentsFromSurahTimings(timings, key);
+  const prop = !segs;
+  if (!segs) {
+    // No real data for this reciter: the even-distribution fallback is built
+    // lazily by updateWordHighlight once the audio duration is known.
+    segs = null;
+  }
+  if (!segs) { state.wordTiming = { key, reciterId, segs: null, prop }; return null; }
+  state.wordTiming = { key, reciterId, segs, prop: false };
+  state.wordTimingCache[`${reciterId}:${key}`] = { segs };
+  trimCache(state.wordTimingCache, 120);
+  saveJSON(LS_WORDTIMING, state.wordTimingCache);
+  return state.wordTiming;
+}
+
+function updateWordHighlight() {
+  const wt = state.wordTiming;
+  if (!wt || wt.key !== state.currentKey || wt.reciterId !== state.reciterId) return;
+  let segs = wt.segs;
+  if (!segs && wt.prop) {
+    // Proportional fallback: needs the real duration, which arrives with metadata.
+    const durMs = dom.audioEl.duration * 1000;
+    segs = proportionalSegments(state.wordCountFor, durMs);
+    if (segs) wt.segs = segs; // build once, reuse every frame after
+  }
+  if (!segs) return;
+  const pos = pickActiveWord(segs, dom.audioEl.currentTime * 1000);
+  dom.readArabic.querySelectorAll(".qword-active").forEach((n) => n.classList.remove("qword-active"));
+  if (!pos) return;
+  const node = dom.readArabic.querySelector(`[data-wpos="${pos}"]`);
+  if (node) node.classList.add("qword-active");
 }
 
 /* ---------- Tafsir (Ibn Kathir) ---------- */
@@ -455,7 +591,22 @@ async function renderRead() {
     const data = await loadVerse(key);
     if (token !== readToken) return; // stale response
     if (data.ar) {
-      dom.readArabic.textContent = data.ar;
+      const words = Array.isArray(data.words) ? data.words : null;
+      state.wordCountFor = words ? words.length : 0;
+      if (words && words.length) {
+        // Word-per-span render so the recitation can light up each word
+        dom.readArabic.textContent = "";
+        for (const w of words) {
+          const span = document.createElement("span");
+          span.className = "qword";
+          span.dataset.wpos = String(w.position);
+          span.textContent = w.text;
+          dom.readArabic.appendChild(span);
+          dom.readArabic.appendChild(document.createTextNode(" "));
+        }
+      } else {
+        dom.readArabic.textContent = data.ar;
+      }
       const badge = document.createElement("span");
       badge.className = "ayah-badge";
       badge.textContent = String(parseKey(key).ayah); // Western numerals
@@ -572,6 +723,7 @@ async function loadAudioUrl(key, reciterId) {
 
 async function refreshAudio(key) {
   const btn = dom.btnPlay;
+  loadWordTiming(key).catch(() => {}); // fire-and-forget; highlight data for this verse
   btn.disabled = true;
   dom.audioFill.style.width = "0%";
   const currentSrc = dom.audioEl.src;
@@ -1017,6 +1169,7 @@ function wireEvents() {
         el.pause();
         el.currentTime = 0;
         dom.audioFill.style.width = "0%";
+        updateWordHighlight(); // rewind resets the lit word too
         // Guard for any environment without rAF (tests, older engines): fall
         // back to playing on the next macrotask instead.
         const raf = (typeof requestAnimationFrame === "function")
@@ -1060,6 +1213,7 @@ function wireEvents() {
     if (d && isFinite(d)) {
       dom.audioFill.style.width = `${(dom.audioEl.currentTime / d) * 100}%`;
     }
+    updateWordHighlight();
   });
 
   // Install button for Android / desktop Chrome-style prompts
