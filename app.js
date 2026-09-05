@@ -473,7 +473,7 @@ function pickActiveWord(segs, ms) {
 
 async function loadWordTiming(key) {
   const reciterId = state.reciterId;
-  const { surah } = parseKey(key);
+  const { chapter: surah } = parseKey(key);
   const memoKey = `${reciterId}:${surah}`;
   let timings = surahTimingMemo.get(memoKey);
   if (!timings) {
