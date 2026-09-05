@@ -254,5 +254,14 @@ console.log("\n--- Integration: verse loading pipeline ---");
     wlOut.length === 2 && wlOut[0].position === 1 && wlOut[1].position === 3);
   check("word list tolerates garbage input", wl(null).length === 0 && wl(undefined).length === 0);
 
+  // --- Offline + reconnect (v32) ---
+  const upd = vm.runInContext("updateDecision", sandbox);
+  check("reconnect: a newer remote version triggers a reload",
+    upd("v33", "v32") === "reload");
+  check("reconnect: same or missing remote does nothing",
+    upd("v32", "v32") === "none" && upd(null, "v32") === "none");
+  check("reconnect: missing current version stays safe",
+    upd("v33", null) === "none");
+
   console.log("\n" + (pass ? "ALL TESTS PASSED ✔" : "SOME TESTS FAILED ✘"));
 })();

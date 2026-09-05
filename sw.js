@@ -1,8 +1,20 @@
 /* Ayah service worker — network-first for the shell (so updates flow),
-   network-first for Quran.com data, cache fallback for offline use */
-const VERSION = "v31";
+   network-first for Quran.com data + word timings, cache-first for recitation
+   audio (offline playback of ayahs you've played), cache fallback everywhere */
+const VERSION = "v32";
 const SHELL_CACHE = `ayah-shell-${VERSION}`;
 const API_CACHE = `ayah-api-${VERSION}`;
+const AUDIO_CACHE = `ayah-audio-${VERSION}`;
+/* Recitation audio CDNs used by the app. Played ayahs are stored so playback
+   keeps working with no connection. */
+const AUDIO_HOSTS = new Set([
+  "verses.quran.com",
+  "verses.quranicaudio.com",
+  "download.quranicaudio.com",
+  "mirrors.quranicaudio.com",
+  "everyayah.com"
+]);
+const AUDIO_MAX_ENTRIES = 80; // keep roughly the last ~80 played ayahs
 
 const SHELL_ASSETS = [
   "./",
@@ -27,7 +39,7 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  const keep = new Set([SHELL_CACHE, API_CACHE]);
+  const keep = new Set([SHELL_CACHE, API_CACHE, AUDIO_CACHE]);
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(keys.filter((k) => !keep.has(k)).map((k) => caches.delete(k)))
@@ -39,8 +51,10 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);
 
-  // Data from Quran.com: network-first, cache fallback (works offline for seen verses)
-  if (url.hostname === "api.quran.com") {
+  // Quran.com data (verses/translations) + qurancdn word timings:
+  // network-first, cache fallback (works offline for seen verses)
+  if (req.method === "GET" &&
+      (url.hostname === "api.quran.com" || url.hostname === "api.qurancdn.com")) {
     event.respondWith(
       fetch(req)
         .then((res) => {
@@ -51,6 +65,34 @@ self.addEventListener("fetch", (event) => {
           return res;
         })
         .catch(() => caches.match(req))
+    );
+    return;
+  }
+
+  // Recitation audio: cache-first so played ayahs replay offline.
+  // Entries are FULL bodies stored under a Range-less request; when the
+  // <audio> element later asks with a Range header, cache.match() returns a
+  // sliced 206 where the browser supports it, or the full 200 otherwise —
+  // both play fine.
+  if (req.method === "GET" && AUDIO_HOSTS.has(url.hostname)) {
+    event.respondWith(
+      caches.open(AUDIO_CACHE).then(async (cache) => {
+        const hit = await cache.match(req);
+        if (hit) return hit;
+        // Not cached: fetch the complete file (no Range header) so it can be
+        // stored and replayed offline later.
+        const full = await fetch(new Request(req.url, { method: "GET" }));
+        if (full && full.ok && full.status === 200) {
+          await cache.put(new Request(req.url), full.clone()).catch(() => {});
+          const keys = await cache.keys();
+          if (keys.length > AUDIO_MAX_ENTRIES) {
+            for (const k of keys.slice(0, keys.length - AUDIO_MAX_ENTRIES)) {
+              await cache.delete(k);
+            }
+          }
+        }
+        return full;
+      })
     );
     return;
   }

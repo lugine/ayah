@@ -141,7 +141,7 @@ const LS_LOOP = "ayah.loop.v1"; // multi-ayah loop range { on, from, to }
 const LS_SPEED = "ayah.speed.v1";
 const LS_VERSION = "ayah.version.v1";
 const LS_NAV_AT = "ayah.lastNavAt.v1";
-const APP_VERSION = "v31"; // keep in sync with sw.js VERSION
+const APP_VERSION = "v32"; // keep in sync with sw.js VERSION
 const LS_DISPLAY = "ayah.display.v1";
 const LS_TAFSIRCACHE = "ayah.tafsirCache.v1";
 // Declared here, not in the sync section: `state` reads them at line ~224,
@@ -1238,6 +1238,45 @@ function wireEvents() {
     state.installed = true;
     dom.installBtn.hidden = true;
   });
+}
+
+/* ================================================================
+   Reconnect (back online): update the app itself, then sync data
+   ================================================================ */
+// Pure: what should the page do when the reported remote version differs
+// from the one this tab is running?
+function updateDecision(remote, current) {
+  return remote && current && remote !== current ? "reload" : "none";
+}
+
+async function onBackOnline() {
+  try {
+    refreshSW(); // ask the SW to check for a newer worker (fire-and-forget)
+    const remote = await fetchRemoteVersion();
+    if (remote) saveJSON(LS_VERSION, remote);
+    if (updateDecision(remote, APP_VERSION) === "reload") {
+      toast("New version " + remote + " — updating…");
+      setTimeout(() => location.reload(), 1200);
+      return;
+    }
+    // Data refresh over the fresh connection: same order as the Sync now
+    // button — push this device's real state, then adopt the cloud position.
+    if (state.syncOn && state.syncToken) {
+      const pushed = await pushSync();
+      await pullSync(true);
+      refreshSyncStatus();
+      toast(pushed ? "Back online — synced ✓" : "Back online");
+    }
+  } catch { /* reconnect bookkeeping must never break the app */ }
+}
+
+function onWentOffline() {
+  toast("Offline — the app keeps working (played ayahs stay available)");
+}
+
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  window.addEventListener("online", () => { onBackOnline(); });
+  window.addEventListener("offline", () => { onWentOffline(); });
 }
 
 /* ================================================================
